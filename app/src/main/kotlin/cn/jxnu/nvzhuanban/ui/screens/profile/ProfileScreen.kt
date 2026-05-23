@@ -1,0 +1,767 @@
+package cn.jxnu.nvzhuanban.ui.screens.profile
+
+import android.os.Build
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.ListAlt
+import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.Brightness4
+import androidx.compose.material.icons.outlined.Brightness6
+import androidx.compose.material.icons.outlined.Brightness7
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.ColorLens
+import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MeetingRoom
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import cn.jxnu.nvzhuanban.R
+import cn.jxnu.nvzhuanban.data.model.UserProfile
+import cn.jxnu.nvzhuanban.data.model.formatCredit
+import cn.jxnu.nvzhuanban.data.storage.AvatarPrefs
+import cn.jxnu.nvzhuanban.data.storage.ThemeMode
+import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
+import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
+import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProfileScreen(
+    onLogout: () -> Unit,
+    onOpenGrades: () -> Unit,
+    onOpenClassroom: () -> Unit,
+    onOpenExams: () -> Unit,
+    onOpenTrainingPlan: () -> Unit,
+    onOpenPeopleSearch: () -> Unit,
+    onOpenCalendar: () -> Unit,
+    viewModel: ProfileViewModel = viewModel(),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
+    val themeMode by ThemePrefs.themeMode.collectAsState()
+    val dynamicColor by ThemePrefs.dynamicColor.collectAsState()
+    val showAvatar by AvatarPrefs.showAvatar.collectAsState()
+
+    val context = LocalContext.current
+    val versionName = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "0.1.0"
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.profile_title)) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+            )
+        },
+    ) { padding ->
+        // StateScaffold 现在会把 modifier 一并应用到 Success 分支，所以只在外层挂一次 padding 即可。
+        // 旧代码在内层 LazyColumn 上又 .padding(padding) 一次，会让顶部空出两倍 TopAppBar 高度。
+        StateScaffold(
+            state = state,
+            modifier = Modifier.padding(padding),
+            onRetry = viewModel::load,
+        ) { data ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                item { UserCard(user = data.user, showAvatar = showAvatar) }
+                item {
+                    GradesEntryCard(
+                        cumulativeCredits = data.user.cumulativeCredits,
+                        onClick = onOpenGrades,
+                    )
+                }
+                item {
+                    ToolsBlock(
+                        onOpenExams = onOpenExams,
+                        onOpenClassroom = onOpenClassroom,
+                        onOpenTrainingPlan = onOpenTrainingPlan,
+                        onOpenPeopleSearch = onOpenPeopleSearch,
+                        onOpenCalendar = onOpenCalendar,
+                        onOpenTheme = { showThemeDialog = true },
+                    )
+                }
+                item {
+                    SettingsBlock(
+                        showAvatar = showAvatar,
+                        versionName = versionName,
+                        onAvatarToggle = AvatarPrefs::setShowAvatar,
+                        onAboutClick = { showAboutDialog = true },
+                        onLogoutClick = { showLogoutConfirm = true },
+                    )
+                }
+                item { Spacer(modifier = Modifier.height(24.dp)) }
+            }
+        }
+    }
+
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            title = { Text("退出登录") },
+            text = { Text("将清除本地登录态，需要重新输入账号密码。是否继续？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLogoutConfirm = false
+                    viewModel.logout()
+                    onLogout()
+                }) { Text("退出", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (showAboutDialog) {
+        AboutDialog(versionName = versionName, onDismiss = { showAboutDialog = false })
+    }
+
+    if (showThemeDialog) {
+        ThemeChoiceDialog(
+            current = themeMode,
+            dynamicColor = dynamicColor,
+            onDynamicColorToggle = ThemePrefs::setDynamicColor,
+            onSelect = { ThemePrefs.setMode(it); showThemeDialog = false },
+            onDismiss = { showThemeDialog = false },
+        )
+    }
+}
+
+@Composable
+private fun UserCard(user: UserProfile, showAvatar: Boolean) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.primary,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                    ),
+                ),
+            )
+            .padding(20.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 学生头像：默认关闭，需在"设置 → 显示学生头像"打开。开启后用 OkHttp + 应用 session
+            // cookie 取 jwc /MyControl 上的图；失败回落到 Person 图标
+            RemoteJwcImage(
+                url = user.avatarUrl?.takeIf { showAvatar },
+                contentDescription = stringResource(R.string.cd_avatar),
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.White.copy(alpha = 0.2f)),
+                fallback = {
+                    Icon(
+                        imageVector = Icons.Outlined.Person,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(36.dp),
+                    )
+                },
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = user.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "${user.studentId} · ${user.grade} 级",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.9f),
+                )
+                // 学院/专业/班级 由 ProfileViewModel.enrichFromGrades 后台异步从成绩页补上；
+                // 首次进 App 还在加载时这几行可能为空，此时显示 "加载中…" 占位
+                Spacer(modifier = Modifier.height(2.dp))
+                val collegeMajor = listOf(user.college, user.major)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" · ")
+                if (collegeMajor.isNotEmpty()) {
+                    Text(
+                        text = collegeMajor,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.85f),
+                    )
+                }
+                if (user.className.isNotBlank()) {
+                    Text(
+                        text = user.className,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.85f),
+                    )
+                }
+                if (collegeMajor.isEmpty() && user.className.isBlank()) {
+                    Text(
+                        text = "学院信息加载中…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GradesEntryCard(
+    cumulativeCredits: Float,
+    onClick: () -> Unit,
+) {
+    // 成绩从底栏挪到这里。位置紧贴 UserCard，独占一张 Card —— 视觉上比 ToolsBlock 的小 row
+    // 重得多，方便用户一眼看到入口。副标题展示已修学分（cumulativeCredits 由
+    // ProfileViewModel.enrichFromGrades 后台从成绩页填上，未到时 fallback 到提示文字）。
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.School,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.grades_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                val subtitle = if (cumulativeCredits > 0f) {
+                    "已修 ${cumulativeCredits.formatCredit()} 学分"
+                } else {
+                    "查看历年成绩与标准分"
+                }
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToolsBlock(
+    onOpenExams: () -> Unit,
+    onOpenClassroom: () -> Unit,
+    onOpenTrainingPlan: () -> Unit,
+    onOpenPeopleSearch: () -> Unit,
+    onOpenCalendar: () -> Unit,
+    onOpenTheme: () -> Unit,
+) {
+    // 二级功能集合：3 列 × 2 行图标网格，刚好把 6 个入口塞满，不用占位 Spacer。主题色从
+    // SettingsBlock 挪过来——它的点击行为是"打开选择 Dialog"，跟其他几个查询入口本质一样，
+    // 放一块更顺，也让 SettingsBlock 进一步瘦身。代价是丢了状态副标题（"跟随系统 · 品牌色"），
+    // 但 Dialog 打开后就能看到当前选中项。
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            maxItemsInEachRow = 3,
+        ) {
+            ToolTile(
+                icon = Icons.Outlined.Event,
+                title = stringResource(R.string.exams_title),
+                modifier = Modifier.weight(1f),
+                onClick = onOpenExams,
+            )
+            ToolTile(
+                icon = Icons.AutoMirrored.Outlined.ListAlt,
+                title = "培养方案",
+                modifier = Modifier.weight(1f),
+                onClick = onOpenTrainingPlan,
+            )
+            ToolTile(
+                icon = Icons.Outlined.CalendarMonth,
+                title = stringResource(R.string.calendar_title),
+                modifier = Modifier.weight(1f),
+                onClick = onOpenCalendar,
+            )
+            ToolTile(
+                icon = Icons.Outlined.Search,
+                title = stringResource(R.string.people_search_title),
+                modifier = Modifier.weight(1f),
+                onClick = onOpenPeopleSearch,
+            )
+            ToolTile(
+                icon = Icons.Outlined.MeetingRoom,
+                title = stringResource(R.string.classroom_title),
+                modifier = Modifier.weight(1f),
+                onClick = onOpenClassroom,
+            )
+            ToolTile(
+                icon = Icons.Outlined.ColorLens,
+                title = stringResource(R.string.profile_theme),
+                modifier = Modifier.weight(1f),
+                onClick = onOpenTheme,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToolTile(
+    icon: ImageVector,
+    title: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(28.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+@Composable
+private fun SettingsBlock(
+    showAvatar: Boolean,
+    versionName: String,
+    onAvatarToggle: (Boolean) -> Unit,
+    onAboutClick: () -> Unit,
+    onLogoutClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column {
+            SettingsToggleRow(
+                icon = Icons.Outlined.AccountCircle,
+                title = "显示学生头像",
+                subtitle = "关闭时不向教务系统请求头像",
+                checked = showAvatar,
+                onCheckedChange = onAvatarToggle,
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Outlined.Info,
+                title = stringResource(R.string.profile_about),
+                subtitle = "女专办 v$versionName",
+                onClick = onAboutClick,
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.AutoMirrored.Outlined.Logout,
+                title = stringResource(R.string.profile_logout),
+                tint = MaterialTheme.colorScheme.error,
+                onClick = onLogoutClick,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+) {
+    val contentAlpha = if (enabled) 1f else 0.5f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { if (enabled) it.clickable { onCheckedChange(!checked) } else it }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha),
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha),
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha),
+                )
+            }
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+        )
+    }
+}
+
+@Composable
+private fun SettingsRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = tint,
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+    )
+}
+
+@Composable
+private fun PrivacySection(title: String, body: String) {
+    Column {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+private val ThemeMode.label: String
+    get() = when (this) {
+        ThemeMode.SYSTEM -> "跟随系统"
+        ThemeMode.LIGHT -> "浅色"
+        ThemeMode.DARK -> "深色"
+    }
+
+private val ThemeMode.icon: ImageVector
+    get() = when (this) {
+        ThemeMode.SYSTEM -> Icons.Outlined.Brightness6
+        ThemeMode.LIGHT -> Icons.Outlined.Brightness7
+        ThemeMode.DARK -> Icons.Outlined.Brightness4
+    }
+
+@Composable
+private fun ThemeChoiceDialog(
+    current: ThemeMode,
+    dynamicColor: Boolean,
+    onDynamicColorToggle: (Boolean) -> Unit,
+    onSelect: (ThemeMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val dynamicAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val effectiveDynamic = dynamicColor && dynamicAvailable
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("主题模式") },
+        text = {
+            Column {
+                ThemeMode.entries.forEach { mode ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(mode) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = mode == current,
+                            onClick = { onSelect(mode) },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            imageVector = mode.icon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(mode.label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .let { if (dynamicAvailable) it.clickable { onDynamicColorToggle(!effectiveDynamic) } else it }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ColorLens,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.profile_dynamic_color),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface.copy(
+                                alpha = if (dynamicAvailable) 1f else 0.5f,
+                            ),
+                        )
+                        Text(
+                            text = if (dynamicAvailable) {
+                                stringResource(R.string.profile_theme_dynamic)
+                            } else {
+                                stringResource(R.string.profile_dynamic_color_unavailable)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                alpha = if (dynamicAvailable) 1f else 0.5f,
+                            ),
+                        )
+                    }
+                    Switch(
+                        checked = effectiveDynamic,
+                        onCheckedChange = onDynamicColorToggle,
+                        enabled = dynamicAvailable,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("好") }
+        },
+    )
+}
+
+@Composable
+private fun AboutDialog(
+    versionName: String,
+    onDismiss: () -> Unit,
+) {
+    var privacyExpanded by rememberSaveable { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("关于") },
+        text = {
+            Column {
+                Text(
+                    "女专办",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "版本 $versionName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(16.dp))
+                val primaryColor = MaterialTheme.colorScheme.primary
+                val taglineText = remember(primaryColor) {
+                    buildAnnotatedString {
+                        append("江西师范大学非官方教务客户端，仿「")
+                        withLink(
+                            LinkAnnotation.Url(
+                                url = "https://github.com/Reqwey/MySHSMU",
+                                styles = TextLinkStyles(
+                                    style = SpanStyle(
+                                        color = primaryColor,
+                                        textDecoration = TextDecoration.Underline,
+                                    ),
+                                ),
+                            ),
+                        ) {
+                            append("酱紫办")
+                        }
+                        append("」。本应用与江西师范大学及其教务处无任何隶属或合作关系，仅供个人学习查询使用。")
+                    }
+                }
+                Text(
+                    taglineText,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "所有数据仅取自学校教务系统并保存在本机，App 不上传、不收集任何用户数据。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = { privacyExpanded = !privacyExpanded },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                ) {
+                    Text(if (privacyExpanded) "收起隐私说明" else "查看完整隐私说明")
+                }
+                if (privacyExpanded) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                    )
+                    PrivacySection(
+                        title = "本地保存",
+                        body = "登录 Cookie、自动登录凭据、课表周次修正、主题与头像偏好、通知已读位置、桌面小组件快照，全部仅存于本机。",
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    PrivacySection(
+                        title = "加密凭据",
+                        body = "仅当勾选「下次自动登录」时才会保存账号密码，并通过 Android Keystore + EncryptedSharedPreferences 加密。",
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    PrivacySection(
+                        title = "头像请求",
+                        body = "学生头像默认不加载；仅在打开「显示学生头像」后，才会向教务系统请求头像。",
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("好") }
+        },
+    )
+}

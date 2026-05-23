@@ -1,0 +1,270 @@
+package cn.jxnu.nvzhuanban.data.network
+
+import android.content.Context
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
+
+/**
+ * 文件持久化 CookieJar。
+ *
+ * 设计选择：
+ * - 用纯文本 TSV 文件，每行一条 cookie，便于排查问题（生产环境可改 EncryptedSharedPreferences）
+ * - 内存里用 ConcurrentHashMap 缓存，写入文件异步触发避免阻塞主线程
+ * - 启动时同步加载（filesDir 文件 IO 通常 < 10ms，可接受）
+ * - 落盘采用 tmp + atomic rename，断电只会留下完整旧版或完整新版，不会损坏
+ * - 不存 cookie 的安全字段细节（拿到的字段够 OkHttp 重建即可）
+ *
+ * 该 CookieJar 必须**先于**任何 OkHttp 请求构造（即 Application.onCreate 里 init）。
+ */
+class PersistentCookieJar(context: Context) : CookieJar {
+
+    private val cookieFile: File = File(context.applicationContext.filesDir, "jxnu_cookies.tsv")
+    private val tmpFile: File = File(context.applicationContext.filesDir, "jxnu_cookies.tsv.tmp")
+    private val byDomain = ConcurrentHashMap<String, MutableList<Cookie>>()
+    private val lock = ReentrantReadWriteLock()
+
+    init {
+        loadFromDisk()
+    }
+
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        if (cookies.isEmpty()) return
+        // [stopped] 拦截 clearAll 之后到达的"漏网"cookie，避免它们重建刚被清掉的会话文件。
+        // login() / clearForHost() 会显式 resume()，恢复后正常接收。
+        if (stopped) return
+        lock.write {
+            cookies.forEach { c ->
+                val list = byDomain.getOrPut(c.domain) { mutableListOf() }
+                // 同 name + path 视为同一个 cookie，新值覆盖旧值
+                list.removeAll { it.name == c.name && it.path == c.path }
+                // 服务器主动用 max-age=0 删除某个 cookie：不要再加回去
+                if (c.expiresAt > System.currentTimeMillis()) {
+                    list.add(c)
+                }
+            }
+        }
+        persistAsync()
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val now = System.currentTimeMillis()
+        val matching = mutableListOf<Cookie>()
+        val expired = mutableListOf<Pair<String, Cookie>>()
+        // 读路径走读锁，让 CAS 重定向链上的多个 OkHttp 调用真并发。
+        // 过期项先记下来，最后再升级到写锁批量清掉。
+        lock.read {
+            for ((domain, list) in byDomain) {
+                for (c in list) {
+                    if (c.expiresAt <= now) {
+                        expired.add(domain to c)
+                        continue
+                    }
+                    if (c.matches(url)) matching.add(c)
+                }
+            }
+        }
+        if (expired.isNotEmpty()) {
+            lock.write {
+                for ((domain, c) in expired) {
+                    byDomain[domain]?.removeAll { it.name == c.name && it.path == c.path && it.expiresAt == c.expiresAt }
+                }
+                byDomain.entries.removeAll { (_, v) -> v.isEmpty() }
+            }
+            persistAsync()
+        }
+        // RFC 6265 §5.4：更具体的 path 必须排在前面。某些 ASP.NET 会话 cookie 在 /cas
+        // 和 / 各设一份同名，顺序错了服务端会按"较短 path"那份决定 session。
+        matching.sortWith(compareByDescending { it.path.length })
+        return matching
+    }
+
+    /** 清空所有 cookie（退出登录时调用）。会阻止后续 [saveFromResponse] 直到下一次 [resume]。 */
+    fun clearAll() {
+        lock.write { byDomain.clear() }
+        synchronized(persistLock) {
+            stopped = true
+            persistGeneration++
+            dirty = false
+            runCatching { cookieFile.delete() }
+            runCatching { tmpFile.delete() }
+        }
+    }
+
+    /**
+     * 清掉所有"会随发往 [host] 的请求一同发送的"cookie。
+     *
+     * 用 OkHttp 自带的 [Cookie.matches] 做匹配，正确处理：
+     *  - hostOnly cookie（domain 精确等于 host）
+     *  - domain cookie（domain 是 host 的父域，例如 `.jxnu.edu.cn` 对 uis 子域）
+     *  - path / secure / httpOnly / expiresAt 限制
+     *
+     * 使用场景：CAS 登录前清掉 uis.jxnu.edu.cn 域的旧 TGC（CASTGC），避免 CAS 看到 TGC 直接 302
+     * 跳过登录页 → 解析不到 execution token。注意这同时会清父域 cookie；jwc 业务 session 本身是
+     * hostOnly（domain=jwc.jxnu.edu.cn），不会被牵连。
+     *
+     * 调用此方法后会显式 [resume]，确保后续接收 cookie。
+     */
+    fun clearForHost(host: String) {
+        val probeUrl = "https://$host/".toHttpUrl()
+        var changed = false
+        lock.write {
+            for ((_, list) in byDomain) {
+                val it = list.iterator()
+                while (it.hasNext()) {
+                    if (it.next().matches(probeUrl)) {
+                        it.remove()
+                        changed = true
+                    }
+                }
+            }
+            if (changed) byDomain.entries.removeAll { (_, v) -> v.isEmpty() }
+        }
+        if (changed) {
+            synchronized(persistLock) {
+                stopped = false  // login 链路立刻会写入新 cookie，确保 saveFromResponse 不被拦
+                persistGeneration++
+            }
+            persistAsync()
+        } else {
+            // 没有 cookie 要清也至少把 stopped 复位 —— clearForHost 是 login 起手仪式，调用方期望
+            // 后续的 saveFromResponse 一定能落库。
+            synchronized(persistLock) { stopped = false }
+        }
+    }
+
+    /**
+     * 判断当前是否有能发送到 jwc 域名的 cookie。
+     *
+     * 用 OkHttp 自带的 `Cookie.matches(url)` 做匹配，正确处理：
+     *  - cookie domain = `jwc.jxnu.edu.cn`（精确）
+     *  - cookie domain = `jxnu.edu.cn`（更宽的父域名）
+     *  - path / secure / httpOnly / expiresAt 限制
+     */
+    fun hasJwcSession(): Boolean {
+        val probeUrl = "https://${JxnuUrls.JWC_HOST}/".toHttpUrl()
+        return loadForRequest(probeUrl).isNotEmpty()
+    }
+
+    private fun loadFromDisk() {
+        if (!cookieFile.exists()) return
+        runCatching {
+            cookieFile.readLines().forEach { line ->
+                parseCookieLine(line)?.let { c ->
+                    byDomain.getOrPut(c.domain) { mutableListOf() }.add(c)
+                }
+            }
+        }
+    }
+
+    private val persistLock = Any()
+    /** 有未落盘的修改。每次 saveFromResponse / prune 都置 true，落盘后由后台线程清零。 */
+    @Volatile private var dirty = false
+    /** 后台落盘线程是否已经启动。同时只允许一个，避免并发写文件。 */
+    @Volatile private var writing = false
+    /** 单调递增的持久化版本，用来阻止退出登录前的旧快照在清空后回写到磁盘。 */
+    @Volatile private var persistGeneration = 0L
+    /**
+     * "拒绝接收新 cookie"的栅门。[clearAll] 置 true，[clearForHost] 置 false。
+     * 防止 logout 后还在飞的 OkHttp 响应通过 [saveFromResponse] 把会话 cookie 重新落库。
+     */
+    @Volatile private var stopped = false
+
+    /**
+     * 标记有修改并按需启动后台落盘线程。
+     *
+     * 旧实现用单 boolean `persistPending`：写线程进入后早期就置 false，导致写期间到来的
+     * 新写入找不到"已有线程在跑"的信号 → 也直接返回 → 新 cookie 不落盘。
+     * 现在改成 dirty/writing 分离：dirty 任何时候由新写入置 true；写线程在每轮写完后
+     * 重新检查 dirty，仍脏就再写一轮，直到追平为止才退出。
+     */
+    private fun persistAsync() {
+        val shouldStart = synchronized(persistLock) {
+            if (stopped) return  // logout 后期"漏网"写入直接吞掉，不重启 daemon
+            dirty = true
+            if (writing) false else { writing = true; true }
+        }
+        if (!shouldStart) return
+        Thread {
+            try {
+                while (true) {
+                    val generation = synchronized(persistLock) {
+                        if (stopped) {
+                            // 中途被 clearAll：把 writing 复位，让 logout 之后再 login 时能起新线程
+                            writing = false
+                            dirty = false
+                            null
+                        } else if (dirty) {
+                            dirty = false
+                            persistGeneration
+                        } else {
+                            writing = false
+                            null
+                        }
+                    }
+                    if (generation == null) return@Thread
+                    persistSync(generation)
+                }
+            } catch (_: Throwable) {
+                synchronized(persistLock) { writing = false }
+            }
+        }.also { it.isDaemon = true; it.name = "CookieJar-Persist" }.start()
+    }
+
+    private fun persistSync(generation: Long) {
+        val snapshot: List<Cookie> = lock.read {
+            byDomain.values.flatMap { it.toList() }
+        }
+        val text = snapshot.joinToString("\n") { serializeCookieLine(it) }
+        synchronized(persistLock) {
+            // 二次校验：临门一脚发现已被 clearAll，立即放弃，不要把刚清的快照写回去
+            if (stopped || generation != persistGeneration) return
+            runCatching {
+                // 先写 tmp 再原子 rename，避免断电留下截断文件
+                tmpFile.writeText(text)
+                // File.renameTo 在 Android(POSIX) 同卷下是原子的；目标存在时大多数 FS 也能覆盖，
+                // 失败再降级到先删后改。
+                if (!tmpFile.renameTo(cookieFile)) {
+                    cookieFile.delete()
+                    tmpFile.renameTo(cookieFile)
+                }
+            }
+        }
+    }
+
+    private fun serializeCookieLine(c: Cookie): String =
+        listOf(
+            c.name,
+            c.value,
+            c.domain,
+            c.path,
+            c.expiresAt.toString(),
+            c.secure.toString(),
+            c.httpOnly.toString(),
+            c.hostOnly.toString(),
+        ).joinToString("\t")
+
+    private fun parseCookieLine(line: String): Cookie? {
+        val p = line.split("\t")
+        if (p.size < 8) return null
+        return runCatching {
+            Cookie.Builder()
+                .name(p[0])
+                .value(p[1])
+                .path(p[3])
+                .expiresAt(p[4].toLong())
+                .apply {
+                    if (p[7].toBoolean()) hostOnlyDomain(p[2]) else domain(p[2])
+                    if (p[5].toBoolean()) secure()
+                    if (p[6].toBoolean()) httpOnly()
+                }
+                .build()
+        }.getOrNull()
+    }
+}
