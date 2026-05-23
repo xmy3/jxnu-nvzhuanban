@@ -1,0 +1,400 @@
+package cn.jxnu.nvzhuanban.ui.screens.peoplesearch
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import cn.jxnu.nvzhuanban.R
+import cn.jxnu.nvzhuanban.ui.components.EmptyState
+import cn.jxnu.nvzhuanban.ui.components.ErrorState
+import cn.jxnu.nvzhuanban.ui.components.LoadingState
+
+/**
+ * 师生统一查询页。
+ *
+ * 与原来分开的「教工查询」/「学生查询」相比，仅 UI 层合并：底层仍走两套
+ * [cn.jxnu.nvzhuanban.data.repository.TeacherRepository] / [cn.jxnu.nvzhuanban.data.repository.StudentRepository]，
+ * 解析器、详情 / 课表二级页面、退登清缓存挂钩都不动。
+ *
+ * UI 状态分两层：
+ *  - 顶部 `type` chip（教工 / 学生）：本地 [rememberSaveable]，切换时调 [PeopleSearchViewModel.clearResults]
+ *    把上次结果清掉，避免列表里残留另一种人的卡片；
+ *  - keyword / field / mode 也是本地 [rememberSaveable]——它们是输入态，跟着 type 走也行，
+ *    但用户习惯上"切到学生重新输关键词"更直观，所以一并保留在 Screen。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PeopleSearchScreen(
+    onBack: () -> Unit,
+    onOpenPerson: (PersonResult) -> Unit,
+    viewModel: PeopleSearchViewModel = viewModel(),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    var type by rememberSaveable { mutableStateOf(PersonType.TEACHER) }
+    var keyword by rememberSaveable { mutableStateOf("") }
+    var field by rememberSaveable { mutableStateOf(PeopleSearchField.NAME) }
+    var mode by rememberSaveable { mutableStateOf(PeopleMatchMode.EXACT) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusRequester = remember { FocusRequester() }
+
+    // 切换教工 / 学生时清掉上一种结果。首次 Composition 触发的初始调用是 no-op（state 已是 Initial）。
+    LaunchedEffect(type) {
+        viewModel.clearResults()
+    }
+
+    val submit: () -> Unit = {
+        if (keyword.isNotBlank()) {
+            keyboard?.hide()
+            viewModel.search(type, keyword.trim(), field, mode)
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.people_search_title)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = stringResource(R.string.cd_back),
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize(),
+        ) {
+            SearchPanel(
+                type = type,
+                onTypeChange = { type = it },
+                keyword = keyword,
+                onKeywordChange = { keyword = it },
+                field = field,
+                onFieldChange = { field = it },
+                mode = mode,
+                onModeChange = { mode = it },
+                onSubmit = submit,
+                focusRequester = focusRequester,
+            )
+            Box(modifier = Modifier.weight(1f)) {
+                when (val s = state) {
+                    is PeopleSearchUiState.Initial -> EmptyState(
+                        message = stringResource(
+                            when (type) {
+                                PersonType.TEACHER -> R.string.people_search_initial_teacher
+                                PersonType.STUDENT -> R.string.people_search_initial_student
+                            }
+                        ),
+                        icon = Icons.Outlined.Search,
+                    )
+                    is PeopleSearchUiState.Loading -> LoadingState()
+                    is PeopleSearchUiState.Error -> ErrorState(
+                        message = s.message,
+                        onRetry = viewModel::retry,
+                    )
+                    is PeopleSearchUiState.Success -> if (s.results.isEmpty()) {
+                        EmptyState(
+                            message = stringResource(
+                                when (s.type) {
+                                    PersonType.TEACHER -> R.string.people_search_no_match_teacher
+                                    PersonType.STUDENT -> R.string.people_search_no_match_student
+                                }
+                            ),
+                            icon = Icons.Outlined.Search,
+                        )
+                    } else {
+                        ResultList(
+                            results = s.results,
+                            message = s.message,
+                            count = s.count,
+                            onClickPerson = onOpenPerson,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchPanel(
+    type: PersonType,
+    onTypeChange: (PersonType) -> Unit,
+    keyword: String,
+    onKeywordChange: (String) -> Unit,
+    field: PeopleSearchField,
+    onFieldChange: (PeopleSearchField) -> Unit,
+    mode: PeopleMatchMode,
+    onModeChange: (PeopleMatchMode) -> Unit,
+    onSubmit: () -> Unit,
+    focusRequester: FocusRequester,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // 顶部一行：教工 / 学生切换
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilterPill(
+                    label = stringResource(R.string.people_search_type_teacher),
+                    selected = type == PersonType.TEACHER,
+                    onClick = { onTypeChange(PersonType.TEACHER) },
+                )
+                FilterPill(
+                    label = stringResource(R.string.people_search_type_student),
+                    selected = type == PersonType.STUDENT,
+                    onClick = { onTypeChange(PersonType.STUDENT) },
+                )
+            }
+            OutlinedTextField(
+                value = keyword,
+                onValueChange = onKeywordChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester),
+                placeholder = {
+                    Text(
+                        stringResource(
+                            when (type) {
+                                PersonType.TEACHER -> R.string.people_search_keyword_hint_teacher
+                                PersonType.STUDENT -> R.string.people_search_keyword_hint_student
+                            }
+                        )
+                    )
+                },
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilterPill(
+                    label = stringResource(R.string.people_search_field_name),
+                    selected = field == PeopleSearchField.NAME,
+                    onClick = { onFieldChange(PeopleSearchField.NAME) },
+                )
+                FilterPill(
+                    label = stringResource(
+                        when (type) {
+                            PersonType.TEACHER -> R.string.people_search_field_teacher_id
+                            PersonType.STUDENT -> R.string.people_search_field_student_id
+                        }
+                    ),
+                    selected = field == PeopleSearchField.ID,
+                    onClick = { onFieldChange(PeopleSearchField.ID) },
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                FilterPill(
+                    label = stringResource(R.string.people_search_mode_exact),
+                    selected = mode == PeopleMatchMode.EXACT,
+                    onClick = { onModeChange(PeopleMatchMode.EXACT) },
+                )
+                FilterPill(
+                    label = stringResource(R.string.people_search_mode_fuzzy),
+                    selected = mode == PeopleMatchMode.FUZZY,
+                    onClick = { onModeChange(PeopleMatchMode.FUZZY) },
+                )
+            }
+            Button(
+                onClick = onSubmit,
+                enabled = keyword.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.people_search_button))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label) },
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primary,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+    )
+}
+
+@Composable
+private fun ResultList(
+    results: List<PersonResult>,
+    count: Int?,
+    message: String?,
+    onClickPerson: (PersonResult) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            // 学生检索常带 "查询结果过多，只显示前：10 条记录" 这类原文提示，优先展示；
+            // 否则退回到 "查询结果：N 条记录"。
+            val header = message?.takeIf { it.isNotBlank() }
+                ?: stringResource(R.string.people_search_count_template, count ?: results.size)
+            Text(
+                text = header,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+        }
+        items(
+            items = results,
+            key = { it.userNum.ifEmpty { it.idText + it.name } },
+        ) { result ->
+            PersonCard(result = result, onClick = { onClickPerson(result) })
+        }
+        item { Spacer(modifier = Modifier.height(8.dp)) }
+    }
+}
+
+@Composable
+private fun PersonCard(result: PersonResult, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Person,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = result.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (result.gender.isNotBlank()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = result.gender,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                val firstLine = listOfNotNull(
+                    result.idText.takeIf { it.isNotBlank() },
+                    result.department.takeIf { it.isNotBlank() },
+                ).joinToString(" · ")
+                if (firstLine.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = firstLine,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // 学生独有：班级行（教工没有这一行）
+                if (result is PersonResult.StudentResult && result.className.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = result.className,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.Outlined.Badge,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
