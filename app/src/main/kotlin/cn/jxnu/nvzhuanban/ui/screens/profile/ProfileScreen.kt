@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -44,12 +45,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.jxnu.nvzhuanban.R
+import cn.jxnu.nvzhuanban.data.model.AppRelease
 import cn.jxnu.nvzhuanban.data.model.UserProfile
 import cn.jxnu.nvzhuanban.data.model.formatCredit
 import cn.jxnu.nvzhuanban.data.storage.AvatarPrefs
@@ -82,6 +87,7 @@ import cn.jxnu.nvzhuanban.data.storage.ThemeMode
 import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+import cn.jxnu.nvzhuanban.ui.screens.announcement.openExternalHttpUrl
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,18 +102,34 @@ fun ProfileScreen(
     viewModel: ProfileViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val latestRelease by viewModel.latestRelease.collectAsStateWithLifecycle()
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
     val themeMode by ThemePrefs.themeMode.collectAsState()
     val dynamicColor by ThemePrefs.dynamicColor.collectAsState()
     val showAvatar by AvatarPrefs.showAvatar.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val context = LocalContext.current
     val versionName = remember(context) {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull() ?: "0.1.0"
+    }
+
+    // 收 ViewModel 的一次性事件（用户主动点「检查更新」的结果），决定弹 Dialog 还是 Snackbar。
+    // 静默检查命中走的是 latestRelease StateFlow，跟这里完全独立。
+    LaunchedEffect(viewModel) {
+        viewModel.checkResult.collect { result ->
+            when (result) {
+                UpdateCheckResult.Checking -> snackbarHostState.showSnackbar("正在检查更新…")
+                UpdateCheckResult.Latest -> snackbarHostState.showSnackbar("当前已是最新版本 v$versionName")
+                is UpdateCheckResult.Newer -> showUpdateDialog = true
+                is UpdateCheckResult.Failed -> snackbarHostState.showSnackbar(result.message)
+            }
+        }
     }
 
     Scaffold(
@@ -117,6 +139,7 @@ fun ProfileScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         // StateScaffold 现在会把 modifier 一并应用到 Success 分支，所以只在外层挂一次 padding 即可。
         // 旧代码在内层 LazyColumn 上又 .padding(padding) 一次，会让顶部空出两倍 TopAppBar 高度。
@@ -151,8 +174,16 @@ fun ProfileScreen(
                     SettingsBlock(
                         showAvatar = showAvatar,
                         versionName = versionName,
+                        latestRelease = latestRelease,
                         onAvatarToggle = AvatarPrefs::setShowAvatar,
                         onAboutClick = { showAboutDialog = true },
+                        onCheckUpdate = {
+                            if (latestRelease != null) {
+                                showUpdateDialog = true
+                            } else {
+                                viewModel.forceCheck()
+                            }
+                        },
                         onLogoutClick = { showLogoutConfirm = true },
                     )
                 }
@@ -181,6 +212,22 @@ fun ProfileScreen(
 
     if (showAboutDialog) {
         AboutDialog(versionName = versionName, onDismiss = { showAboutDialog = false })
+    }
+
+    val pendingRelease = latestRelease
+    if (showUpdateDialog && pendingRelease != null) {
+        UpdateDialog(
+            release = pendingRelease,
+            onUpdate = {
+                openExternalHttpUrl(context, pendingRelease.htmlUrl)
+                showUpdateDialog = false
+            },
+            onSkip = {
+                viewModel.skipVersion(pendingRelease.tagName)
+                showUpdateDialog = false
+            },
+            onDismiss = { showUpdateDialog = false },
+        )
     }
 
     if (showThemeDialog) {
@@ -429,8 +476,10 @@ private fun ToolTile(
 private fun SettingsBlock(
     showAvatar: Boolean,
     versionName: String,
+    latestRelease: AppRelease?,
     onAvatarToggle: (Boolean) -> Unit,
     onAboutClick: () -> Unit,
+    onCheckUpdate: () -> Unit,
     onLogoutClick: () -> Unit,
 ) {
     Card(
@@ -453,6 +502,19 @@ private fun SettingsBlock(
                 title = stringResource(R.string.profile_about),
                 subtitle = "女专办 v$versionName",
                 onClick = onAboutClick,
+            )
+            SettingsDivider()
+            // subtitle 三态切换：有新版本时用 primary 色凸显（仿 BadgedBox 视觉但走纯文案，
+            // 跟 SettingsBlock 的 row-list 视觉密度更搭）；其他情况只显示当前版本。
+            val updateTint = if (latestRelease != null) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface
+            SettingsRow(
+                icon = Icons.Outlined.SystemUpdate,
+                title = "检查更新",
+                subtitle = if (latestRelease != null) "发现新版本 v${latestRelease.versionName} · 点击查看"
+                else "当前版本 v$versionName",
+                tint = updateTint,
+                onClick = onCheckUpdate,
             )
             SettingsDivider()
             SettingsRow(
@@ -762,6 +824,58 @@ private fun AboutDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("好") }
+        },
+    )
+}
+
+/**
+ * 「发现新版本」对话框。仿 [AboutDialog] 的 `text + 底部 TextButton` 排版 —— "跳过此版本"
+ * 不挤进 confirm/dismiss 槽位（Material3 AlertDialog 标准是两按钮），而是放在 text 底部
+ * 当 secondary action，跟 AboutDialog 的"查看完整隐私说明"位置一致。
+ *
+ * Release notes 不做 Markdown 渲染（项目无 markdown 解析依赖），直接展示原文。多数 release
+ * 的 `### 标题` / `- 列表项` 字面量虽然不好看但仍可读，且不掺第三方依赖。
+ */
+@Composable
+private fun UpdateDialog(
+    release: AppRelease,
+    onUpdate: () -> Unit,
+    onSkip: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("发现新版本 v${release.versionName}") },
+        text = {
+            Column {
+                if (release.publishedAt.isNotBlank()) {
+                    Text(
+                        "发布于 ${release.publishedAt}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (release.body.isNotBlank()) {
+                    Text(
+                        release.body,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                TextButton(
+                    onClick = onSkip,
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                ) {
+                    Text("跳过此版本", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onUpdate) { Text("立即更新") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("稍后") }
         },
     )
 }

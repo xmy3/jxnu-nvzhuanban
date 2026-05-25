@@ -13,3 +13,9 @@ internal fun sampleHtml(name: String): String {
         ?: error("找不到测试资源 /samples/$name")
     return stream.use { it.readBytes().toString(Charsets.UTF_8) }
 }
+
+/**
+ * 同样从 `/samples/` 读，仅作为语义化别名给 JSON / 其他文本 fixture 用。
+ * 实现完全等同于 [sampleHtml] —— 都是 UTF-8 文本。
+ */
+internal fun sampleJson(name: String): String = sampleHtml(name)

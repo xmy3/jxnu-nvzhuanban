@@ -3,11 +3,13 @@ package cn.jxnu.nvzhuanban
 import android.app.Application
 import cn.jxnu.nvzhuanban.data.repository.AnnouncementRepository
 import cn.jxnu.nvzhuanban.data.repository.AuthRepository
+import cn.jxnu.nvzhuanban.data.repository.UpdateRepository
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
 import cn.jxnu.nvzhuanban.data.storage.AvatarPrefs
 import cn.jxnu.nvzhuanban.data.storage.CourseOverridesStore
 import cn.jxnu.nvzhuanban.data.storage.ScheduleHeightPrefs
 import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
+import cn.jxnu.nvzhuanban.data.storage.UpdatePrefs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -34,6 +36,7 @@ class NvzhuanbanApp : Application() {
         ScheduleHeightPrefs.init(this)
         CourseOverridesStore.init(this)
         AnnouncementReadAnchor.init(this)
+        UpdatePrefs.init(this)
         val auth = AuthRepository.init(this)
         val deferred = CompletableDeferred<Boolean>()
         sessionRestore = deferred
@@ -49,5 +52,22 @@ class NvzhuanbanApp : Application() {
         appScope.launch {
             runCatching { AnnouncementRepository.instance.fetchAll(page = 1) }
         }
+
+        // GitHub 新版本检查：24h 限频，失败静默不写时间戳（下次启动仍可重试）。
+        // 跑在独立 OkHttp 实例上，不污染 jwc cookie 存储。详见 UpdateRepository。
+        appScope.launch {
+            runCatching {
+                UpdateRepository.instance.checkIfDue(currentVersionName())
+            }
+        }
     }
+
+    /**
+     * 从 packageManager 读 versionName。读不到（极少见，比如包信息异常）回退到 `0.0.0`，
+     * 让 [cn.jxnu.nvzhuanban.data.network.SemVer.fromString] 解析成 0.0.0 → 任何 release
+     * 都"更新"，反而不会卡死。这个回退跟 [ProfileScreen] 的 `versionName` 读取一致。
+     */
+    private fun currentVersionName(): String = runCatching {
+        packageManager.getPackageInfo(packageName, 0).versionName
+    }.getOrNull() ?: "0.0.0"
 }

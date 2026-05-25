@@ -39,8 +39,8 @@ android {
         applicationId = "cn.jxnu.nvzhuanban"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1000
-        versionName = "1.0.0"
+        versionCode = 1010
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -145,6 +145,9 @@ dependencies {
 
     // Test
     testImplementation(libs.junit)
+    // org.json 真实实现 —— Android stub 在 JVM unit test 里所有方法返回 null，
+    // 用到 JSONObject.optString 的解析（GitHubUpdateClient / ScheduleSnapshot）会 NPE。
+    testImplementation(libs.org.json)
     androidTestImplementation(libs.androidx.test.core)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
