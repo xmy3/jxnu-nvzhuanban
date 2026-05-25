@@ -31,3 +31,6 @@ keystore.properties
 
 # 历史 / 临时 build 产物归档：公开发布走 GitHub Releases，仓库不再追踪 APK / AAB
 /dist/
+
+# Android Studio Logcat 导出文件（手动诊断时存到根目录，不入库）
+*.logcat
