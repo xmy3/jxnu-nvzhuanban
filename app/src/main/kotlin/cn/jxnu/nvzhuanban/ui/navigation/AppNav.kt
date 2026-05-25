@@ -1,5 +1,7 @@
 package cn.jxnu.nvzhuanban.ui.navigation
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -10,6 +12,7 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -18,9 +21,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -29,6 +35,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import cn.jxnu.nvzhuanban.NvzhuanbanApp
 import cn.jxnu.nvzhuanban.R
 import cn.jxnu.nvzhuanban.data.model.AuthState
 import cn.jxnu.nvzhuanban.data.network.SessionEvents
@@ -107,6 +114,28 @@ private val mainRouteSet = TABS.map { it.route }.toSet()
 
 @Composable
 fun AppNav() {
+    // Splash 限时 800ms 兜底放行（见 MainActivity.SPLASH_MAX_WAIT_MS）—— 如果 sessionRestore
+    // 这时还没回来（差网络冷启动常见），AppNav 自己显示 loading 占位继续等，**不**进入
+    // NavHost。这是必须的：下面的 [startDestination] 用 `remember { ... }` 一次性计算，
+    // 此时 AuthState 默认是 LoggedOut，会被锁死到登录页，sessionRestore 后续返回 LoggedIn
+    // 也不会再切回 SCHEDULE。等到 sessionReady=true 再首次组合 NavHost 就避开了这个 race。
+    val app = LocalContext.current.applicationContext as NvzhuanbanApp
+    val sessionReady by produceState(initialValue = app.sessionRestore.isCompleted) {
+        if (!value) {
+            runCatching { app.sessionRestore.await() }
+            value = true
+        }
+    }
+    if (!sessionReady) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
     val nav = rememberNavController()
     val authRepo = AuthRepository.instance
     val backEntry by nav.currentBackStackEntryAsState()
@@ -117,7 +146,7 @@ fun AppNav() {
     val hasAnnouncementUnread by AnnouncementUnreadState.hasUnread
         .collectAsStateWithLifecycle(initialValue = false)
 
-    // 启动时（Splash 屏已经等过 tryRestoreSession）：
+    // 启动时（Splash 屏 + 上面 sessionReady gate 已经等过 tryRestoreSession）：
     //   已登录 → 直接进课表
     //   未登录 → 进登录页
     // remember 确保 startDestination 只在首次 Composition 计算一次，避免回退栈被搅乱
