@@ -59,7 +59,12 @@ class TodayScheduleWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         // Glance provideGlance 在 Dispatchers.Default 上执行；磁盘 IO 需要切到 IO 调度器，
         // 避免阻塞 Glance worker 线程池影响其它 widget 的渲染。
-        val snapshot = withContext(Dispatchers.IO) { WidgetSnapshotStore.load(context) }
+        // runCatching 兜底：WidgetSnapshotStore.load 内部已 getOrDefault(empty)，但 IO 调度本身
+        // 仍可能抛（罕见 OOM / 调度异常），失败时退化到空 snapshot 仍能渲染 EmptyHint，并继续往下
+        // 排 alarm 让小部件下一次有机会自我恢复。
+        val snapshot = runCatching {
+            withContext(Dispatchers.IO) { WidgetSnapshotStore.load(context) }
+        }.getOrDefault(ScheduleSnapshot.empty())
         val today = LocalDate.now()
         val nowMins = LocalTime.now().let { it.hour * 60 + it.minute }
         // 按节次排序，保证 nextCourseFromNow 的 firstOrNull 拿到的真是"最早还没结束"那节。
@@ -69,7 +74,12 @@ class TodayScheduleWidget : GlanceAppWidget() {
         val weekday = today.dayOfWeek.value
 
         // 给自己排下一次唤醒（节次切换 / 跨日）。无 widget 实例时 PendingIntent 还在但不会重绘。
-        WidgetUpdateScheduler.scheduleNext(context.applicationContext, today, nowMins, courses)
+        // runCatching：MIUI / HyperOS 等定制 ROM 在后台严苛模式下偶尔会让
+        // setAndAllowWhileIdle 抛 SecurityException —— 不能让一次 alarm 失败传染到 provideContent，
+        // 否则用户看到的是 "Can't show content"，而本来应该至少看到一次"今天的课"。
+        runCatching {
+            WidgetUpdateScheduler.scheduleNext(context.applicationContext, today, nowMins, courses)
+        }
 
         provideContent {
             GlanceTheme {

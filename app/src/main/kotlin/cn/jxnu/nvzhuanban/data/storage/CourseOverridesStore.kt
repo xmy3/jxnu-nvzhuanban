@@ -47,6 +47,8 @@ object CourseOverridesStore {
      * 等同于教务网的 1..18。
      */
     fun set(name: String, weeks: List<Int>?) {
+        // init guard：和 [clearAll] 一致，防极端时序（widget receiver 进程 / 单测）下 lateinit 异常。
+        if (!::sp.isInitialized) return
         val key = KEY_PREFIX + name
         if (weeks.isNullOrEmpty()) {
             sp.edit().remove(key).apply()

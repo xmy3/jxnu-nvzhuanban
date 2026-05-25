@@ -33,6 +33,8 @@ object ScheduleHeightPrefs {
     }
 
     fun setSectionHeightDp(dp: Float) {
+        // init guard：极端时序（widget receiver 进程 / 单测漏 init）下避免 lateinit 异常。
+        if (!::sp.isInitialized) return
         val clamped = dp.coerceIn(MIN_DP, MAX_DP)
         if (clamped == _sectionHeightDp.value) return
         sp.edit().putFloat(KEY_DP, clamped).apply()
