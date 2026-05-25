@@ -320,13 +320,25 @@ class TodayScheduleWidget : GlanceAppWidget() {
     /**
      * Glance items 用的稳定标识。课程名 + 节次 + weekday 足够标识"当天这一节课"，
      * 不会跨课程冲突。Long 是因为 items(itemId) 要求 Long 返回。
+     *
+     * 委托给顶级 [snapshotCourseItemId]，方便 JVM 单测覆盖；规则细节见那里的注释。
      */
-    private fun stableId(c: SnapshotCourse): Long {
-        var h = 1125899906842597L
-        for (ch in c.name) h = 31L * h + ch.code
-        h = 31L * h + c.weekday
-        h = 31L * h + c.startSection
-        h = 31L * h + c.endSection
-        return h
-    }
+    private fun stableId(c: SnapshotCourse): Long = snapshotCourseItemId(c)
+}
+
+/**
+ * 把一节 [SnapshotCourse] 映射到 Glance `LazyColumn.items(itemId = ...)` 用的稳定 Long。
+ *
+ * 关键约束：Glance 把 `[Long.MIN_VALUE, Long.MIN_VALUE / 2]`（即 -4611686018427387904
+ * 及以下）整段留给自己用，传入这个区间的 itemId 会抛 IllegalArgumentException、整个
+ * widget 显示 "Can't show content"。所以多项式 hash 之后用 `and Long.MAX_VALUE`
+ * 把符号位清零，把结果钳到 `[0, Long.MAX_VALUE]`，永远跳出保留段。
+ */
+internal fun snapshotCourseItemId(c: SnapshotCourse): Long {
+    var h = 1125899906842597L
+    for (ch in c.name) h = 31L * h + ch.code
+    h = 31L * h + c.weekday
+    h = 31L * h + c.startSection
+    h = 31L * h + c.endSection
+    return h and Long.MAX_VALUE
 }
