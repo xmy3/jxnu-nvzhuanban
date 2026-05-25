@@ -30,11 +30,22 @@ object UserDefaultPage {
         """欢迎您[，,]\s*[（(]\s*([^,，)）\s]+)\s*[,，]\s*[A-Za-z]+\s*[）)]\s*([一-龥·]{2,10})"""
     )
 
+    /**
+     * GET `/User/Default.aspx` 拿 HTML 并解析。
+     *
+     * 故意不用 `getHtmlAuth` 变体：调用方 [cn.jxnu.nvzhuanban.data.repository.AuthRepository]
+     * 本身就是 reauth 流程，再走 `runWithSessionRecovery` 会出现"recovery 套 recovery"
+     * 死循环 —— 例如 cookie 失效 → reauth → 拉用户首页 → 又触发 SessionExpired → 又 reauth。
+     *
+     * 异常处理：故意**不**在这里 `runCatching` 吞掉，让网络/解析错误向上抛。
+     * `AuthRepository` 的两处调用点都已经 `runCatching { fetchAndParse(...) }.getOrNull()
+     * ?: parse(username, "")` 兜底，由它判断"是真的没拿到 → 退化到学号占位 + name=同学"
+     * 还是"网络瞬时失败 → 用户重启后再试"。这里若 silent `.orEmpty()` 反而会让上层失去信号、
+     * 永远走占位分支，掩盖真实问题（曾经的 bug：CAS 流程 200 返回登录页时被当成"用户首页空响应"
+     * 而非"会话失效"）。
+     */
     suspend fun fetchAndParse(studentId: String): UserProfile = withContext(Dispatchers.IO) {
-        val html = runCatching {
-            JwcClient.getHtml(JxnuUrls.USER_DEFAULT, "用户首页返回空响应")
-        }.getOrNull().orEmpty()
-
+        val html = JwcClient.getHtml(JxnuUrls.USER_DEFAULT, "用户首页返回空响应")
         parse(studentId, html)
     }
 

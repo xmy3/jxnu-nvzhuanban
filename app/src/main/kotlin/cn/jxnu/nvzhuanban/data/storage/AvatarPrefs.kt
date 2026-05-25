@@ -28,6 +28,8 @@ object AvatarPrefs {
     }
 
     fun setShowAvatar(show: Boolean) {
+        // init guard：极端时序（widget receiver 进程 / 单测漏 init）下避免 lateinit 异常。
+        if (!::sp.isInitialized) return
         sp.edit().putBoolean(KEY_SHOW, show).apply()
         _showAvatar.value = show
     }

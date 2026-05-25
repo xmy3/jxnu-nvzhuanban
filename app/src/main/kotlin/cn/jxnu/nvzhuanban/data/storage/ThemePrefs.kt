@@ -50,11 +50,15 @@ object ThemePrefs {
     }
 
     fun setMode(mode: ThemeMode) {
+        // init guard：极端时序下（如 widget receiver 进程 / ContentProvider 抢先调用，
+        // 或单测漏 init），避免 lateinit 异常导致整页崩。和 [clearAll] 的处理一致。
+        if (!::sp.isInitialized) return
         sp.edit().putString(KEY_MODE, mode.storageValue).apply()
         _themeMode.value = mode
     }
 
     fun setDynamicColor(enabled: Boolean) {
+        if (!::sp.isInitialized) return
         sp.edit().putBoolean(KEY_DYNAMIC, enabled).apply()
         _dynamicColor.value = enabled
     }
