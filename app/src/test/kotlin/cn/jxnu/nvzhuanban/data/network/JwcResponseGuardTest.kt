@@ -62,6 +62,38 @@ class JwcResponseGuardTest {
     }
 
     @Test
+    fun `throws session expired when minimal cas login form with execution input only`() {
+        // 现实的 CAS 登录页可能极简：一个 <input name="execution"> 就够。
+        // 结构化判断必须独立成立，不依赖子串 fingerprint 计数。
+        val body = """<html><form><input name="execution" value="e1s1"></form></html>"""
+        val response = response("https://jwc.jxnu.edu.cn/User/Default.aspx", 200, body)
+
+        val thrown = assertThrows(JwcException::class.java) {
+            JwcResponseGuard.readJwcHtml(response, "empty")
+        }
+        assertEquals(JwcError.SessionExpired, thrown.error)
+    }
+
+    @Test
+    fun `does not flag announcement body that incidentally mentions __RSA__`() {
+        // 回归保护 #9：旧的 any() 判断会把任何提到 __RSA__ 的通知正文当作登录页 → 触发不该
+        // 发生的静默重登。新逻辑要求结构化命中或子串 ≥2 个，单纯出现 __RSA__ 不应误判。
+        val body = """
+            <html><body>
+              <article>
+                <h1>关于统一身份认证密码加密流程的说明</h1>
+                <p>新版 CAS 在前端用 RSA 公钥加密密码，传输时密文前缀为 __RSA__ 字面量。</p>
+              </article>
+            </body></html>
+        """.trimIndent()
+        val response = response("https://jwc.jxnu.edu.cn/Portal/ArticlesView.aspx?id=1", 200, body)
+
+        // 不抛异常，正常返回 body
+        val result = JwcResponseGuard.readJwcHtml(response, "empty")
+        assertEquals(body, result)
+    }
+
+    @Test
     fun `rejects unexpected final host`() {
         val response = response("https://example.com/phishing", 200, "<html></html>")
 
