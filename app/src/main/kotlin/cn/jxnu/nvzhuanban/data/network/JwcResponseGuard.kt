@@ -1,6 +1,7 @@
 package cn.jxnu.nvzhuanban.data.network
 
 import okhttp3.Response
+import org.jsoup.Jsoup
 
 /**
  * Centralizes the sanity checks for HTML fetched from the JWC site.
@@ -49,9 +50,37 @@ object JwcResponseGuard {
     }
 
     /**
-     * 内容嗅探：fingerprint 来自 CAS / Portal 登录表单都会出现的字段。
-     * 只看 HTML 头 8KB 即可——登录页 fingerprint 都在文档头部，且全文 scan 太贵。
+     * 结构化判断"这是不是一张登录页"。
+     *
+     * 之前用子串扫描（`"__RSA__" in body`、`"name=\"execution\"" in body`），假阳性：
+     * 通知/校历的正文里只要恰好包含这些字面量（站长把一段 CAS 文档原文贴进通知 / 邮件模板等），
+     * 业务页就被误判成会话过期 → 触发不该发生的静默重登，最差还会把 reauth 也用错密码 N 次。
+     *
+     * 现在改为先用 Jsoup 解析后看真正的表单结构：
+     *  - 存在 `<input name="execution">` —— CAS 登录页的硬特征
+     *  - 存在 `<form>` 里包含 `name=passwordEncrypt|password|username` 且 action 指向 cas/login
+     *  - 退化到子串扫描时，要求**同时**命中 ≥2 个特征，单一关键词不再算数
      */
+    private fun looksLikeLoginPage(body: String): Boolean {
+        // 8KB 头部足够覆盖 CAS / Portal 登录页的 <head> + 表单。整页解析对大通知详情太贵。
+        val head = if (body.length > MAX_PROBE_BYTES) body.substring(0, MAX_PROBE_BYTES) else body
+        val structural = runCatching {
+            val doc = Jsoup.parse(head)
+            val hasExecution = doc.selectFirst("input[name=execution]") != null
+            val loginForm = doc.selectFirst("form[action*=/cas/login], form#loginForm, form[action*=LoginAccount]")
+            val hasPasswordField = loginForm?.selectFirst("input[name=passwordEncrypt], input[name=password]") != null
+            hasExecution || hasPasswordField
+        }.getOrDefault(false)
+        if (structural) return true
+
+        // 兜底子串扫描：只有同时命中 ≥2 个 fingerprint 才认。__RSA__ 单独出现不再算数。
+        val hits = LOGIN_PAGE_FINGERPRINTS.count { it in head }
+        return hits >= 2
+    }
+
+    private const val MAX_PROBE_BYTES = 8192
+
+    /** 子串兜底用 fingerprint；要求命中 ≥2 个才算登录页，避免单一关键词巧合误伤。 */
     private val LOGIN_PAGE_FINGERPRINTS = listOf(
         "__RSA__",
         "name=\"passwordEncrypt\"",
@@ -59,9 +88,4 @@ object JwcResponseGuard {
         "name=\"execution\"",
         "/cas/login?service",
     )
-
-    private fun looksLikeLoginPage(body: String): Boolean {
-        val head = if (body.length > 8192) body.substring(0, 8192) else body
-        return LOGIN_PAGE_FINGERPRINTS.any { it in head }
-    }
 }

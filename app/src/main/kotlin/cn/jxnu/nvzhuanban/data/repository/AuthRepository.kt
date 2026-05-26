@@ -43,15 +43,31 @@ class AuthRepository private constructor(
 
     private val authMutex = Mutex()
 
+    /**
+     * 自动重登节流。手动登录不受影响（用户明确意图），仅自动通道（[tryRestoreSession] /
+     * [tryReauthSilently]）受指数退避保护：避免本地保存的旧密码反复打 CAS 把账号锁死。
+     *
+     * 触发场景：用户在网页端改了密码 / 学校强制改密 / CAS 临时拒绝 → 旧凭证不再可用。
+     * 第一次失败如果 [CasLoginClient.Result.Failure.isAuth] 为 true，凭证已被清掉，
+     * 不会再有第二次。但 isAuth=false 的瞬时失败（网络抖动 / 5xx）凭证保留，下次冷启动
+     * 还会重试 —— 这里的节流就是兜底这条路径。
+     */
+    private val autoLoginThrottle = AutoLoginThrottle()
+
     class LoginException(message: String) : RuntimeException(message)
 
     suspend fun login(username: String, password: String, captcha: String = "") = authMutex.withLock {
         _state.value = AuthState.Loading
         when (val r = cas.login(username.trim(), password, captcha.trim())) {
             is CasLoginClient.Result.Success -> {
+                // 手动登录成功 → 重置自动通道节流，让后续冷启动 silent retry 立即可用
+                autoLoginThrottle.recordSuccess()
                 onLoginSuccess(username.trim(), password)
             }
             is CasLoginClient.Result.Failure -> {
+                // 手动登录失败不阻挡用户重试，但**也算进自动通道的失败计数**：
+                // 否则用户在登录页连点 5 次错密码，下次冷启动 silent retry 仍会无脑试一次。
+                autoLoginThrottle.recordFailure()
                 _state.value = AuthState.Error(r.message)
                 throw LoginException(r.message)
             }
@@ -64,9 +80,14 @@ class AuthRepository private constructor(
             if (saved) {
                 storage.lastUsername = username
             } else {
+                // EncryptedSharedPreferences 写失败（厂商魔改 ROM / keystore 损坏 / 设备空间满）
+                // 之前的策略是静默关 rememberMe，用户视角"登录成功"但下次启动还得重新输——
+                // 体验非常古怪。这里把一次性警告塞到 lastLoginWarning，由登录页 ViewModel
+                // 在 submit 成功后取走显示。
                 storage.rememberMe = false
                 storage.lastUsername = null
                 creds.clear()
+                lastLoginWarning = "本机无法安全保存密码，已关闭自动登录"
             }
         } else {
             creds.clear()
@@ -75,6 +96,18 @@ class AuthRepository private constructor(
             .getOrNull()
             ?: UserDefaultPage.parse(username, "")
         _state.value = AuthState.LoggedIn(profile)
+    }
+
+    /**
+     * 一次性的登录侧警告（不是 Error —— 登录本身成功了，只是有衍生异常需要告诉用户）。
+     * [LoginViewModel] 在 submit 成功后调 [consumeLastLoginWarning] 取走并清零。
+     */
+    @Volatile private var lastLoginWarning: String? = null
+
+    fun consumeLastLoginWarning(): String? {
+        val w = lastLoginWarning
+        lastLoginWarning = null
+        return w
     }
 
     /**
@@ -95,17 +128,24 @@ class AuthRepository private constructor(
                 ?: UserDefaultPage.parse(username, "")
             // 解析失败（极端情况：HTML 结构变了）连学号都没有 → 视为未登录，强制重登
             if (profile.studentId.isBlank()) return@withLock false
+            // cookie 直接有效本身就是"自动通道成功"，重置 throttle
+            autoLoginThrottle.recordSuccess()
             _state.value = AuthState.LoggedIn(profile)
             return@withLock true
         }
         // cookie 失效，尝试用保存的凭证静默重登
         val saved = creds.load() ?: return@withLock false
+        // 自动通道节流：上次失败后还在冷却窗口内则跳过，避免旧密码反复打 CAS。
+        // 用户可手动从登录页登录（不受 throttle 限制）。
+        if (autoLoginThrottle.shouldSkip()) return@withLock false
         when (val r = cas.login(saved.username, saved.password)) {
             is CasLoginClient.Result.Success -> {
+                autoLoginThrottle.recordSuccess()
                 onLoginSuccess(saved.username, saved.password)
                 true
             }
             is CasLoginClient.Result.Failure -> {
+                autoLoginThrottle.recordFailure()
                 // 仅当 CAS 明确拒绝认证（密码已改、账号冻结等）时才清凭证；
                 // 网络异常 / 教务系统维护 / TLS 失败等瞬时错误保留凭证，下次启动再试 —
                 // 用户切到差网络偶尔启动一次不应该丢密码。
@@ -139,9 +179,15 @@ class AuthRepository private constructor(
      */
     suspend fun tryReauthSilently(): Boolean = authMutex.withLock {
         val saved = creds.load() ?: return@withLock false
+        // 自动通道节流：与 tryRestoreSession 共享同一计数 / 冷却窗口
+        if (autoLoginThrottle.shouldSkip()) return@withLock false
         when (val r = cas.login(saved.username, saved.password)) {
-            is CasLoginClient.Result.Success -> true
+            is CasLoginClient.Result.Success -> {
+                autoLoginThrottle.recordSuccess()
+                true
+            }
             is CasLoginClient.Result.Failure -> {
+                autoLoginThrottle.recordFailure()
                 if (r.isAuth) creds.clear()
                 false
             }
@@ -214,5 +260,59 @@ class AuthRepository private constructor(
         val instance: AuthRepository
             get() = INSTANCE
                 ?: error("AuthRepository 未初始化，请在 NvzhuanbanApp.onCreate 调用 AuthRepository.init(this)")
+    }
+}
+
+/**
+ * 自动登录通道的失败节流。仅 [AuthRepository.tryRestoreSession] / [AuthRepository.tryReauthSilently]
+ * 调用，**手动 [AuthRepository.login] 不受冷却阻挡**（用户明确意图）但会贡献到失败计数。
+ *
+ * 退避表（连续失败次数 → 冷却时间）：
+ *  - 1 次：30 秒
+ *  - 2 次：2 分钟
+ *  - 3 次：5 分钟
+ *  - 4 次：15 分钟
+ *  - ≥5 次：30 分钟
+ *
+ * 任何一次成功（cookie 自验有效 / CAS login 成功）清零计数。计数仅活在进程里——
+ * App 被杀重启即重置，避免持久化逻辑引来更难调的状态。冷启动场景下：第一次冷启动失败 →
+ * 进程退出 → 第二次冷启动会再试一次（不受节流阻挡）。这是有意为之：用户手动重启 App
+ * 视为"用户已知问题、希望重试"，比墨守 30 分钟冷却更合用户预期。
+ *
+ * 真正要拦的是**单进程内**的高频自动尝试：业务请求触发的 SessionExpired → reauth 死循环。
+ */
+private class AutoLoginThrottle {
+    @Volatile private var lastFailureAt: Long = 0L
+    @Volatile private var consecutiveFailures: Int = 0
+
+    fun shouldSkip(): Boolean {
+        val n = consecutiveFailures
+        if (n == 0) return false
+        val elapsed = System.currentTimeMillis() - lastFailureAt
+        return elapsed < cooldownMs(n)
+    }
+
+    fun recordFailure() {
+        lastFailureAt = System.currentTimeMillis()
+        // 限上界，避免 32 次失败后变成天文数字（虽然 cooldownMs 已经 capped）
+        consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(MAX_TRACKED)
+    }
+
+    fun recordSuccess() {
+        consecutiveFailures = 0
+        lastFailureAt = 0L
+    }
+
+    private fun cooldownMs(n: Int): Long = when (n) {
+        0 -> 0L
+        1 -> 30_000L
+        2 -> 2 * 60_000L
+        3 -> 5 * 60_000L
+        4 -> 15 * 60_000L
+        else -> 30 * 60_000L
+    }
+
+    companion object {
+        private const val MAX_TRACKED = 8
     }
 }

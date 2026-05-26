@@ -44,6 +44,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -63,10 +65,18 @@ fun LoginScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val authState by viewModel.authState.collectAsStateWithLifecycle()
     val keyboard = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
     var showHelp by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.success) {
-        if (state.success) onLoggedIn()
+        if (state.success) {
+            // 在导航前消费一次"登录成功但有衍生异常"的告警；snackbar 在导航瞬间会消失，
+            // 用 Toast 跨页可见。当前唯一来源是 keystore 写失败导致 rememberMe 被关。
+            viewModel.consumeLoginWarning()?.let {
+                Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            }
+            onLoggedIn()
+        }
     }
     // 启动时如果 cookie 恢复成功，AuthRepository 会推送 LoggedIn，直接跳过登录页
     LaunchedEffect(authState) {

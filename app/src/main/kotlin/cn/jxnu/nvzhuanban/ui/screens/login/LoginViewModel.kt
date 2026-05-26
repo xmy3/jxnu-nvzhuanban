@@ -78,4 +78,11 @@ class LoginViewModel(
             }
         }
     }
+
+    /**
+     * 一次性消费"登录成功但有衍生异常"的告警（目前只有"keystore 写失败 → rememberMe 被关"
+     * 一种）。LoginScreen 在 success 触发导航前调用，用 Toast 显示——snackbar 在导航瞬间
+     * 会被吃掉。
+     */
+    fun consumeLoginWarning(): String? = authRepo.consumeLastLoginWarning()
 }

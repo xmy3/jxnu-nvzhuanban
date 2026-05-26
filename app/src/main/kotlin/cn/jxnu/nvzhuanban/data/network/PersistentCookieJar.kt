@@ -39,8 +39,17 @@ class PersistentCookieJar(context: Context) : CookieJar {
         // [stopped] 拦截 clearAll 之后到达的"漏网"cookie，避免它们重建刚被清掉的会话文件。
         // login() / clearForHost() 会显式 resume()，恢复后正常接收。
         if (stopped) return
+        // host 白名单：本 CookieJar 只为 *.jxnu.edu.cn 服务。共享同一个 OkHttp 实例时，
+        // 任何第三方主机（CDN / 统计 / GitHub）的 Set-Cookie 都不允许污染 jxnu_cookies.tsv，
+        // 否则下次 CAS 重定向链上 OkHttp 可能把第三方 cookie 错发给 jwc，或者 cookie 文件越来越大。
+        // GitHubUpdateClient 用独立 OkHttp 是已知规避手段；这里再加一道结构性兜底。
+        if (!url.host.isJxnuHost()) return
         lock.write {
             cookies.forEach { c ->
+                // 二次防御：服务器若把 cookie 的 Domain 设到非 jxnu 域（极少见的开放重定向场景），
+                // 也一并丢弃。`Cookie.matches(url)` 已经保证 domain 是 url.host 的同域或父域，
+                // 但 url.host 是 jxnu 不代表 cookie.domain 也是——OkHttp 会按 RFC 6265 接收。
+                if (!c.domain.isJxnuHost()) return@forEach
                 val list = byDomain.getOrPut(c.domain) { mutableListOf() }
                 // 同 name + path 视为同一个 cookie，新值覆盖旧值
                 list.removeAll { it.name == c.name && it.path == c.path }
@@ -157,6 +166,8 @@ class PersistentCookieJar(context: Context) : CookieJar {
         runCatching {
             cookieFile.readLines().forEach { line ->
                 parseCookieLine(line)?.let { c ->
+                    // 与 saveFromResponse 同口径，丢弃旧版本可能落库的非 jxnu cookie
+                    if (!c.domain.isJxnuHost()) return@let
                     byDomain.getOrPut(c.domain) { mutableListOf() }.add(c)
                 }
             }
@@ -267,4 +278,13 @@ class PersistentCookieJar(context: Context) : CookieJar {
                 .build()
         }.getOrNull()
     }
+}
+
+/**
+ * 是否属于 `*.jxnu.edu.cn`。Cookie.domain 在 OkHttp 已 normalize 不带前导点，但服务器
+ * Set-Cookie 时可能带；URL.host 不会带。两边都 trim 一次稳妥。
+ */
+private fun String.isJxnuHost(): Boolean {
+    val h = trimStart('.').lowercase()
+    return h == JxnuUrls.ROOT_DOMAIN || h.endsWith("." + JxnuUrls.ROOT_DOMAIN)
 }
