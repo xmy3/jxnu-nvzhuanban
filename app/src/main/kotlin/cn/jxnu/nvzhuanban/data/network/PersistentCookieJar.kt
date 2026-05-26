@@ -107,27 +107,29 @@ class PersistentCookieJar(context: Context) : CookieJar {
     }
 
     /**
-     * 清掉所有"会随发往 [host] 的请求一同发送的"cookie。
+     * 清掉所有 domain 落在 [host] 上的 cookie，**忽略 path / secure / httpOnly**。
      *
-     * 用 OkHttp 自带的 [Cookie.matches] 做匹配，正确处理：
-     *  - hostOnly cookie（domain 精确等于 host）
-     *  - domain cookie（domain 是 host 的父域，例如 `.jxnu.edu.cn` 对 uis 子域）
-     *  - path / secure / httpOnly / expiresAt 限制
+     * 历史 bug：旧实现用 `Cookie.matches(https://$host/)` 过滤，附带了 RFC 6265 的 **path** 检查 —
+     * 而 CAS 的 TGC（票据-粒度凭证）通常种在 `path=/cas`。`/cas` 不是 `/` 的前缀，所以 TGC 不会被清。
+     * 用户表现：登录前调用 `clearForHost(uis.jxnu.edu.cn)` 之后，GET `/cas/login` 时浏览器仍把 TGC
+     * 发回去 → CAS 看到有效 TGT 直接 302 跳过登录表单 → 落点 jwc → `fetchExecutionToken` 抛出
+     * "登录页被重定向至 jwc.jxnu.edu.cn"。
      *
-     * 使用场景：CAS 登录前清掉 uis.jxnu.edu.cn 域的旧 TGC（CASTGC），避免 CAS 看到 TGC 直接 302
-     * 跳过登录页 → 解析不到 execution token。注意这同时会清父域 cookie；jwc 业务 session 本身是
-     * hostOnly（domain=jwc.jxnu.edu.cn），不会被牵连。
+     * 新语义：按 cookie domain 与 [host] 的归属关系判定，与请求路径无关。
+     *  - hostOnly cookie（domain 精确等于 host）：domain == host
+     *  - domain cookie（domain 是 host 的父域，例如 `.jxnu.edu.cn` 对 uis 子域）：host 以 ".$domain" 结尾
+     * 这样 TGC (path=/cas) / JSESSIONID (path=/cas) / CASPRIVACY (path=/) 都会被一并清掉，
+     * 但不会牵连 jwc.jxnu.edu.cn 域的业务 session（hostOnly=jwc，不与 uis 同 host）。
      *
-     * 调用此方法后会显式 [resume]，确保后续接收 cookie。
+     * 调用此方法后会显式 resume，确保后续 [saveFromResponse] 接收 cookie。
      */
     fun clearForHost(host: String) {
-        val probeUrl = "https://$host/".toHttpUrl()
         var changed = false
         lock.write {
             for ((_, list) in byDomain) {
                 val it = list.iterator()
                 while (it.hasNext()) {
-                    if (it.next().matches(probeUrl)) {
+                    if (cookieAffectsHost(it.next(), host)) {
                         it.remove()
                         changed = true
                     }
@@ -287,4 +289,24 @@ class PersistentCookieJar(context: Context) : CookieJar {
 private fun String.isJxnuHost(): Boolean {
     val h = trimStart('.').lowercase()
     return h == JxnuUrls.ROOT_DOMAIN || h.endsWith("." + JxnuUrls.ROOT_DOMAIN)
+}
+
+/**
+ * 这条 cookie 是否归属于 [host]（用于 [PersistentCookieJar.clearForHost]）—— 只看 host/domain
+ * 关系，**不**看 path / secure / httpOnly / expiresAt。
+ *
+ * RFC 6265 §5.1.3：
+ *  - hostOnly cookie：domain 精确等于 host
+ *  - domain cookie：host 与 domain 相同，或 host 以 ".$domain" 结尾
+ *
+ * Pure function，便于单测。
+ */
+internal fun cookieAffectsHost(cookie: Cookie, host: String): Boolean {
+    val target = host.trimStart('.').lowercase()
+    val cd = cookie.domain.trimStart('.').lowercase()
+    return if (cookie.hostOnly) {
+        cd == target
+    } else {
+        target == cd || target.endsWith(".$cd")
+    }
 }
