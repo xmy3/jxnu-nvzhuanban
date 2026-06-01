@@ -15,6 +15,15 @@ data class ArticleDetail(
      */
     val postedAt: String,
     val blocks: List<ArticleBlock>,
+    /**
+     * 该详情其实是 jwc 在**无有效会话**时返回的「对不起，该文档需要登录后再查看!」占位页
+     * （HTTP 200、同域、不重定向，所以 [cn.jxnu.nvzhuanban.data.network.JwcResponseGuard]
+     * 不会把它判成会话过期）。由 [cn.jxnu.nvzhuanban.data.network.pages.ArticleDetailPage] 按标题特征识别。
+     *
+     * 为 true 时 [blocks] 被清空，UI 不渲染正文，而是显示「去登录」引导并导向 **app 内登录页**
+     * （历史上这里会把占位页里的「登录」超链接渲染成外链 → 跳浏览器官方教务处，体验割裂）。
+     */
+    val requiresLogin: Boolean = false,
 )
 
 /**

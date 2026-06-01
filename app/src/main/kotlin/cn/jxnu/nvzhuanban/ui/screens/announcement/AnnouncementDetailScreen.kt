@@ -23,11 +23,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.BrokenImage
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.OpenInBrowser
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,6 +60,7 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
@@ -79,6 +83,7 @@ import java.net.URI
 fun AnnouncementDetailScreen(
     articleId: String,
     onBack: () -> Unit,
+    onNavigateToLogin: () -> Unit,
 ) {
     val vm: AnnouncementDetailViewModel = viewModel(
         key = "announcement_detail_$articleId",
@@ -130,10 +135,15 @@ fun AnnouncementDetailScreen(
                 .padding(padding),
             onRetry = vm::load,
         ) { detail ->
-            ArticleBody(
-                detail = detail,
-                onImageClick = { url -> imageViewerUrl = url },
-            )
+            if (detail.requiresLogin) {
+                // jwc 无会话时返回的"需要登录"占位页：不渲染正文，给出 app 内登录引导。
+                LoginRequiredView(onLogin = onNavigateToLogin)
+            } else {
+                ArticleBody(
+                    detail = detail,
+                    onImageClick = { url -> imageViewerUrl = url },
+                )
+            }
         }
     }
 
@@ -147,56 +157,120 @@ fun AnnouncementDetailScreen(
     }
 }
 
+/**
+ * 「需要登录」占位状态：替代正文，居中展示一枚图标 + 文案 + 「去登录」按钮。
+ * 按钮回调 [onLogin] 由 AppNav 接到 app 内登录页（不再是历史上那条跳浏览器官方教务处的外链）。
+ */
+@Composable
+private fun LoginRequiredView(onLogin: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(20.dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(34.dp),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+        Text(
+            text = stringResource(R.string.announcement_login_required_title),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.announcement_login_required_desc),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(28.dp))
+        Button(
+            onClick = onLogin,
+            modifier = Modifier
+                .widthIn(min = 160.dp)
+                .heightIn(min = 50.dp),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.announcement_login_required_action),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+}
+
 @Composable
 private fun ArticleBody(
     detail: ArticleDetail,
     onImageClick: (String) -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-    ) {
-        item {
-            Spacer(modifier = Modifier.height(8.dp))
-            if (detail.title.isNotBlank()) {
-                Text(
-                    text = detail.title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            if (detail.postedAt.isNotBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = detail.postedAt,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            HorizontalDivider(
-                modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-        }
-
-        if (detail.blocks.isEmpty()) {
+    // SelectionContainer 让正文（标题 / 时间 / 段落 / 表格文字）支持长按选中 + 复制。
+    // Compose 1.7 起，选择手势与 InlineRun.Link 的点击、图片/附件的 clickable 可共存。
+    // 已知限制：LazyColumn 会回收滚出屏幕的 item，跨越回收边界的选择会断；可见区域内选/复制正常。
+    SelectionContainer(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+        ) {
             item {
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "正文为空",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Spacer(modifier = Modifier.height(8.dp))
+                if (detail.title.isNotBlank()) {
+                    Text(
+                        text = detail.title,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                if (detail.postedAt.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = detail.postedAt,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
                 )
             }
-        }
 
-        items(detail.blocks) { block ->
-            Spacer(modifier = Modifier.height(8.dp))
-            BlockView(block, onImageClick = onImageClick)
-        }
+            if (detail.blocks.isEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "正文为空",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
-        item { Spacer(modifier = Modifier.height(32.dp)) }
+            items(detail.blocks) { block ->
+                Spacer(modifier = Modifier.height(8.dp))
+                BlockView(block, onImageClick = onImageClick)
+            }
+
+            item { Spacer(modifier = Modifier.height(32.dp)) }
+        }
     }
 }
 

@@ -13,11 +13,13 @@ import cn.jxnu.nvzhuanban.data.widget.ScheduleSnapshot
 import cn.jxnu.nvzhuanban.data.widget.WidgetSnapshotStore
 import cn.jxnu.nvzhuanban.ui.components.UiState
 import cn.jxnu.nvzhuanban.ui.widget.TodayScheduleWidget
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 data class ScheduleScreenState(
@@ -34,6 +36,11 @@ data class ScheduleScreenState(
      * `(week, weekday)` 算成具体日期。null 表示尚未加载或服务器没给。
      */
     val semesterStart: LocalDate? = null,
+    /**
+     * true = 当前展示的是本地磁盘缓存（上次成功看到的课表），因为这次拉取网络失败。
+     * UI 顶部据此显示"离线·上次课表"提示；下次成功拉取后复位 false。
+     */
+    val isOffline: Boolean = false,
 )
 
 class ScheduleViewModel(application: Application) : AndroidViewModel(application) {
@@ -128,6 +135,7 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                         semesterStart = repo.currentSemesterStart(),
                         // 切到本学期 → 跳到本周；切到历史/未来学期 → 第 1 周
                         selectedWeek = if (isCurrentSemester) baselineWeek else 1,
+                        isOffline = false,
                     )
                 }
                 refreshWidgetSnapshot(list)
@@ -163,15 +171,16 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                         semesters = repo.availableSemesters(),
                         selectedSemesterValue = repo.currentSemesterValue(),
                         semesterStart = repo.currentSemesterStart(),
+                        isOffline = false,
                     )
                 }
                 refreshWidgetSnapshot(list)
                 // 若上次未成功补学分，这里再试一次（已成功则 enrichWithCredits 内部短路）
                 tryEnrichCredits()
             } catch (t: Throwable) {
-                // 保留旧 data；只在 UiState 还是 Loading 时才升级为 Error
+                // data 已是 Success（在线旧数据或离线缓存）→ 保留不动；仅当还停在 Loading 才兜底/报错
                 if (_state.value.data is UiState.Loading) {
-                    _state.update { it.copy(data = UiState.Error(t.toUserMessage("刷新失败"))) }
+                    fallbackToSnapshotOrError(t)
                 }
             } finally {
                 _isRefreshing.value = false
@@ -221,6 +230,7 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                         semesterStart = repo.currentSemesterStart(),
                         // 仅首次加载、且用户没主动切过学期时，把 selectedWeek 拉到当前周
                         selectedWeek = if (wasFirstLoad && !userPickedSemester) baselineWeek else it.selectedWeek,
+                        isOffline = false,
                     )
                 }
                 // 每次成功拿到课表，把"今天 + 当前周"的快照存给桌面小部件用
@@ -228,7 +238,8 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                 // 首次加载完成后，后台拉一次成绩页给课程详情补上学分（详见 ScheduleRepository.enrichWithCredits）
                 if (wasFirstLoad) tryEnrichCredits()
             } catch (t: Throwable) {
-                _state.update { it.copy(data = UiState.Error(t.toUserMessage())) }
+                // 网络失败 → 回退磁盘快照（上次成功看到的本学期课表），离线也能看
+                fallbackToSnapshotOrError(t)
             }
         }
     }
@@ -258,6 +269,55 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
      * 历史学期不要写 snapshot —— widget 永远显示"本学期·今天"。
      * 整个写入流程跑在 IO：JSON 序列化 + 文件写 + AppWidgetManager binder 调用都不能在 Main。
      */
+    /** 离线兜底用的还原结果（从磁盘快照转出来）。 */
+    private data class RestoredSchedule(
+        val courses: List<Course>,
+        val semester: String,
+        val totalWeeks: Int,
+        val semesterStart: LocalDate?,
+        val week: Int,
+    )
+
+    /** 读磁盘快照（上次成功保存的本学期课表）并还原成可展示数据；无快照返回 null。 */
+    private suspend fun loadOfflineSnapshot(): RestoredSchedule? {
+        val ctx = getApplication<Application>()
+        val snap = withContext(Dispatchers.IO) { WidgetSnapshotStore.load(ctx) }
+        if (snap.allCourses.isEmpty()) return null
+        return RestoredSchedule(
+            courses = snap.toCourses(),
+            semester = snap.semester.ifBlank { "上次课表" },
+            totalWeeks = if (snap.totalWeeks > 0) snap.totalWeeks else 18,
+            semesterStart = if (snap.hasSemesterStart) LocalDate.ofEpochDay(snap.semesterStartEpochDay) else null,
+            week = snap.weekAt().coerceAtLeast(1),
+        )
+    }
+
+    /**
+     * 拉取失败时的统一兜底：有磁盘快照就以「离线态」展示上次看到的课表，否则升级为 Error。
+     * 离线态隐藏学期切换（快照不含可选学期列表），并把周次/学期重置成快照里的值。
+     */
+    private suspend fun fallbackToSnapshotOrError(error: Throwable) {
+        val offline = loadOfflineSnapshot()
+        if (offline == null) {
+            _state.update { it.copy(data = UiState.Error(error.toUserMessage()), isOffline = false) }
+            return
+        }
+        hasLoadedOnce = true
+        baselineWeek = offline.week
+        _state.update {
+            it.copy(
+                data = UiState.Success(offline.courses),
+                semester = offline.semester,
+                totalWeeks = offline.totalWeeks,
+                semesterStart = offline.semesterStart,
+                selectedSemesterValue = null,
+                semesters = emptyList(),
+                selectedWeek = offline.week.coerceIn(1, offline.totalWeeks.coerceAtLeast(1)),
+                isOffline = true,
+            )
+        }
+    }
+
     private fun refreshWidgetSnapshot(all: List<Course>) {
         // 切到历史/未来学期时不更新 widget snapshot —— widget 永远显示"本学期·今天"
         val isCurrentSemester = repo.availableSemesters()

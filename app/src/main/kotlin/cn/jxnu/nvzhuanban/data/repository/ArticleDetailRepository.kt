@@ -3,6 +3,7 @@ package cn.jxnu.nvzhuanban.data.repository
 import cn.jxnu.nvzhuanban.data.model.ArticleDetail
 import cn.jxnu.nvzhuanban.data.network.JwcClient
 import cn.jxnu.nvzhuanban.data.network.JxnuUrls
+import cn.jxnu.nvzhuanban.data.network.SessionRecovery
 import cn.jxnu.nvzhuanban.data.network.pages.ArticleDetailPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -30,13 +31,14 @@ class ArticleDetailRepository {
     suspend fun fetch(articleId: String): ArticleDetail = mutex.withLock {
         cache[articleId]?.let { return@withLock it }
         val detail = fetchRemote(articleId)
-        cache[articleId] = detail
+        // 不缓存"需要登录"占位页：否则用户去登录回来再点同一篇会命中旧占位，永远看不到正文。
+        if (!detail.requiresLogin) cache[articleId] = detail
         detail
     }
 
     suspend fun refresh(articleId: String): ArticleDetail = mutex.withLock {
         val detail = fetchRemote(articleId)
-        cache[articleId] = detail
+        if (!detail.requiresLogin) cache[articleId] = detail else cache.remove(articleId)
         detail
     }
 
@@ -49,8 +51,23 @@ class ArticleDetailRepository {
     private suspend fun fetchRemote(articleId: String): ArticleDetail =
         withContext(Dispatchers.IO) {
             val url = articleUrl(articleId)
-            val html = JwcClient.getHtmlAuth(url, "通知详情页返回空响应")
-            ArticleDetailPage.parse(html, url)
+            val detail = ArticleDetailPage.parse(
+                JwcClient.getHtmlAuth(url, "通知详情页返回空响应"),
+                url,
+            )
+            // 「需要登录」占位页是 HTTP 200 / 同域 / 不重定向、页内只有一条登录外链，
+            // JwcResponseGuard 不会把它当 SessionExpired，所以 getHtmlAuth 的自动恢复没触发。
+            // 这里主动静默重登一次再重取：只是 jwc cookie 过期、本地仍有凭证的用户能无感看到
+            // 正文；真正未登录 / 凭证失效 / 重登被节流的才落到 UI 的「去登录」引导。
+            // tryReauthSilently 内部经 AuthRepository，自带失败节流 + 并发合并，不会反复打 CAS。
+            if (!detail.requiresLogin) return@withContext detail
+            if (!SessionRecovery.tryReauthSilently()) return@withContext detail
+            // 重登成功，cookie 已新鲜，用 raw getHtml 重取即可（无需再包一层 recovery）。
+            // 重取若仍是占位页则照常引导登录；若抛网络/服务器异常则透传成错误态（比「去登录」更准确）。
+            ArticleDetailPage.parse(
+                JwcClient.getHtml(url, "通知详情页返回空响应"),
+                url,
+            )
         }
 
     private fun articleUrl(id: String) = "${JxnuUrls.JWC_BASE}/Portal/ArticlesView.aspx?id=$id"

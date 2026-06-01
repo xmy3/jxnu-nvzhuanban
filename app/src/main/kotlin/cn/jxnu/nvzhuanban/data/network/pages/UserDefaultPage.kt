@@ -1,5 +1,6 @@
 ﻿package cn.jxnu.nvzhuanban.data.network.pages
 
+import cn.jxnu.nvzhuanban.data.model.PLACEHOLDER_USER_NAME
 import cn.jxnu.nvzhuanban.data.model.UserProfile
 import cn.jxnu.nvzhuanban.data.network.JwcClient
 import cn.jxnu.nvzhuanban.data.network.JxnuUrls
@@ -55,7 +56,7 @@ object UserDefaultPage {
         val (parsedStudentId, parsedName) = extractIdAndName(html)
         val resolvedId = studentId.ifBlank { parsedStudentId.orEmpty() }
         val grade = inferGradeFromStudentId(resolvedId)
-        val name = parsedName?.takeIf { it.isNotBlank() } ?: "同学"
+        val name = parsedName?.takeIf { it.isNotBlank() } ?: PLACEHOLDER_USER_NAME
         return UserProfile(
             studentId = resolvedId,
             name = name,

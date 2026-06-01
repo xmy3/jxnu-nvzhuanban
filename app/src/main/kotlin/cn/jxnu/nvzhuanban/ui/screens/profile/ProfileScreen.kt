@@ -153,7 +153,14 @@ fun ProfileScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                item { UserCard(user = data.user, showAvatar = showAvatar) }
+                item {
+                    UserCard(
+                        user = data.user,
+                        showAvatar = showAvatar,
+                        enrichStatus = data.enrichStatus,
+                        onRetryEnrich = viewModel::retryEnrich,
+                    )
+                }
                 item {
                     GradesEntryCard(
                         cumulativeCredits = data.user.cumulativeCredits,
@@ -242,7 +249,12 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun UserCard(user: UserProfile, showAvatar: Boolean) {
+private fun UserCard(
+    user: UserProfile,
+    showAvatar: Boolean,
+    enrichStatus: EnrichStatus,
+    onRetryEnrich: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -310,12 +322,24 @@ private fun UserCard(user: UserProfile, showAvatar: Boolean) {
                         color = Color.White.copy(alpha = 0.85f),
                     )
                 }
+                // 学院/专业/班级 由 ProfileViewModel.enrichFromGrades 后台异步从成绩页补上。
+                // 三字段全空时按拉取状态给终态：加载中 → 占位文案；失败 → 可点重试，不再无限转圈。
                 if (collegeMajor.isEmpty() && user.className.isBlank()) {
-                    Text(
-                        text = "学院信息加载中…",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
+                    when (enrichStatus) {
+                        EnrichStatus.Loading -> Text(
+                            text = "学院信息加载中…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                        )
+                        EnrichStatus.Failed -> Text(
+                            text = "学院信息加载失败，点击重试",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.9f),
+                            modifier = Modifier.clickable(onClick = onRetryEnrich),
+                        )
+                        // 加载完成但成绩页确实没给学院信息（极少见，如无成绩的新生）：不显示占位
+                        EnrichStatus.Idle -> Unit
+                    }
                 }
             }
         }

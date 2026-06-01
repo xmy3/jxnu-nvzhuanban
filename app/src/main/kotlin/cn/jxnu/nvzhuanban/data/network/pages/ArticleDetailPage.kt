@@ -44,6 +44,14 @@ object ArticleDetailPage {
      */
     private val POSTED_REGEX = Regex("""【\s*时间\s*[:：]\s*(.+?)\s*】""")
 
+    /**
+     * jwc 无会话时 `ArticlesView.aspx` 返回的占位页标题特征：
+     * 「对不起，该文档需要登录后再查看!」。命中后整页按"需要登录"处理，不再把页内那条
+     * 指向网页登录的「登录」超链接渲染成外链（避免点击跳出 app 去官方教务处网页）。
+     * 真实通知标题不会出现这些短语，误判风险可忽略。
+     */
+    private val LOGIN_REQUIRED_TITLE = Regex("""需要登录|登录后再?查看|请登录""")
+
     /** `<font color>` / `style="color:..."` 共用：六位 hex（带或不带 #），或最常见的英文色名。 */
     private val HEX_COLOR = Regex("""#?([0-9a-fA-F]{6})""")
     private val NAMED_COLORS = mapOf(
@@ -81,6 +89,11 @@ object ArticleDetailPage {
         val dateRaw = outer.selectFirst(".text-sub.text-center")?.text().orEmpty()
         val postedAt = POSTED_REGEX.find(dateRaw)?.groupValues?.get(1)?.trim()
             ?: dateRaw.trim()
+
+        // 未登录占位页：标题即「…需要登录后再查看!」。短路返回，blocks 置空，交给 UI 引导内部登录。
+        if (LOGIN_REQUIRED_TITLE.containsMatchIn(title)) {
+            return ArticleDetail(title, postedAt, blocks = emptyList(), requiresLogin = true)
+        }
 
         // 显式从外层 children 里找内层 #main-content，不用 selectFirst 防止把外层自己拿回来
         val body = outer.children().firstOrNull { it.id() == "main-content" }

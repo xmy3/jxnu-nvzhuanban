@@ -2,6 +2,7 @@ package cn.jxnu.nvzhuanban.data.widget
 
 import android.content.Context
 import cn.jxnu.nvzhuanban.data.model.Course
+import cn.jxnu.nvzhuanban.data.model.CourseType
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -67,6 +68,27 @@ data class ScheduleSnapshot(
 
     /** 这份 snapshot 是否带有可信的学期起始日（旧版没有）。 */
     val hasSemesterStart: Boolean get() = semesterStartEpochDay >= 0L
+
+    /**
+     * 把快照还原成完整 [Course] 列表，供课表页「离线兜底」展示（网络失败时显示上次缓存的课表）。
+     * 快照为省体积只存了 widget 需要的字段，这里对缺失字段的处理：
+     *  - id：合成稳定唯一键（同格 weekday+section 同名课唯一），满足 UI 高亮匹配 / 周次编辑 remember key；
+     *  - credit / type / className：快照未存，填默认。课表网格不读这些；课程详情里学分会显示 0（离线降级）。
+     */
+    fun toCourses(): List<Course> = allCourses.map { c ->
+        Course(
+            id = "offline-${c.weekday}-${c.startSection}-${c.endSection}-${c.name}",
+            name = c.name,
+            teacher = c.teacher,
+            location = c.location,
+            weekday = c.weekday,
+            startSection = c.startSection,
+            endSection = c.endSection,
+            weeks = c.weeks,
+            credit = 0f,
+            type = CourseType.LECTURE,
+        )
+    }
 
     fun toJson(): String {
         val arr = JSONArray()
