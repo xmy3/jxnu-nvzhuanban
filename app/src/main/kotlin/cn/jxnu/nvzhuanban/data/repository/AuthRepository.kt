@@ -2,6 +2,8 @@ package cn.jxnu.nvzhuanban.data.repository
 
 import android.content.Context
 import cn.jxnu.nvzhuanban.data.model.AuthState
+import cn.jxnu.nvzhuanban.data.model.UserProfile
+import cn.jxnu.nvzhuanban.data.model.hasPlaceholderName
 import cn.jxnu.nvzhuanban.data.network.AuthStorage
 import cn.jxnu.nvzhuanban.data.network.CasLoginClient
 import cn.jxnu.nvzhuanban.data.network.JxnuHttpClient
@@ -192,6 +194,30 @@ class AuthRepository private constructor(
                 false
             }
         }
+    }
+
+    /**
+     * 重新拉一次用户首页，刷新基础 profile（姓名 / 学号 / 年级 / 头像 URL）。
+     *
+     * 触发场景：首次登录或会话恢复时弱网拉首页失败 → [onLoginSuccess] / [tryRestoreSession]
+     * 回退到 `parse(username, "")` 空 HTML → 姓名退化成占位（学号仍来自传入参数），且这条
+     * 降级 profile 被钉进 [_state] 后整个会话不再刷新。[cn.jxnu.nvzhuanban.ui.screens.profile.ProfileViewModel]
+     * 进页面时若发现姓名仍是占位，调本方法在网络恢复后自愈，不必等用户重启 / 重登。
+     *
+     * 仅当前为 [AuthState.LoggedIn] 时有效。成功且姓名非占位 → 写回 [_state] 并返回新 profile；
+     * 失败 / 仍占位 → 返回 null，保留原 profile（不拿更差的数据覆盖已有的）。
+     *
+     * 走 [UserDefaultPage.fetchAndParse]（内部 raw getHtml，不触发 reauth），所以持有
+     * [authMutex] 期间不会经 [cn.jxnu.nvzhuanban.data.network.SessionRecovery] 重入本类锁。
+     */
+    suspend fun refreshProfile(): UserProfile? = authMutex.withLock {
+        val current = (_state.value as? AuthState.LoggedIn)?.profile ?: return@withLock null
+        val refreshed = runCatching { UserDefaultPage.fetchAndParse(current.studentId) }
+            .getOrNull()
+            ?: return@withLock null
+        if (refreshed.hasPlaceholderName) return@withLock null
+        _state.value = AuthState.LoggedIn(refreshed)
+        refreshed
     }
 
     /**

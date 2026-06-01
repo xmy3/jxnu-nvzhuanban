@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import cn.jxnu.nvzhuanban.data.model.AppRelease
 import cn.jxnu.nvzhuanban.data.model.AuthState
 import cn.jxnu.nvzhuanban.data.model.UserProfile
+import cn.jxnu.nvzhuanban.data.model.hasPlaceholderName
 import cn.jxnu.nvzhuanban.data.network.pages.GradePage
 import cn.jxnu.nvzhuanban.data.network.toUpdateMessage
 import cn.jxnu.nvzhuanban.data.network.toUserMessage
@@ -24,7 +25,15 @@ import kotlinx.coroutines.launch
 
 data class ProfileData(
     val user: UserProfile,
+    val enrichStatus: EnrichStatus = EnrichStatus.Idle,
 )
+
+/**
+ * 学院/专业/班级等"成绩页补充信息"的拉取状态，驱动 UserCard 的占位文案：
+ * [Loading] → "学院信息加载中…"；[Failed] → "加载失败，点击重试"；[Idle] → 已拿到或无需拉取。
+ * 没有这个状态时，拉取失败只能永久停在"加载中…"（旧 bug）。
+ */
+enum class EnrichStatus { Idle, Loading, Failed }
 
 /**
  * 用户主动「检查更新」点击的一次性事件，UI 用 `LaunchedEffect` 收并 Snackbar 呈现。
@@ -69,35 +78,67 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     _state.value = UiState.Error("未登录")
                     return@launch
                 }
-                _state.value = UiState.Success(ProfileData(base))
-                if (base.needsGradeEnrichment()) enrichFromGrades(base)
+                val needsEnrich = base.needsGradeEnrichment()
+                // 先用现有（可能是降级的）profile 渲染；学院信息待 enrich 时先置 Loading 避免文案闪烁
+                _state.value = UiState.Success(
+                    ProfileData(base, if (needsEnrich) EnrichStatus.Loading else EnrichStatus.Idle),
+                )
+                // 姓名自愈：弱网登录恢复时首页拉取失败会把姓名降级成占位并钉进 AuthState。
+                // 这里在网络恢复后重取一次首页修正，成功就替换掉占位 profile（学院信息随后由 enrich 补）。
+                if (base.hasPlaceholderName) {
+                    authRepo.refreshProfile()?.let { refreshed -> updateUser { refreshed } }
+                }
+                if (needsEnrich) enrichFromGrades()
             } catch (t: Throwable) {
                 _state.value = UiState.Error(t.toUserMessage())
             }
         }
     }
 
-    private fun enrichFromGrades(base: UserProfile) {
+    /**
+     * 从成绩页拉学院/专业/班级/已修学分补全 profile。无参——读当前 [_state] 里的 user 作基底，
+     * 所以 [retryEnrich] 能直接复用。失败不再静默吞掉，而是落 [EnrichStatus.Failed] 让 UI 给重试入口。
+     */
+    private fun enrichFromGrades() {
+        setEnrichStatus(EnrichStatus.Loading)
         viewModelScope.launch {
-            val meta: GradePage.StudentMeta = runCatching { gradeRepo.fetchAll().meta }
-                .getOrNull()
-                ?: return@launch
-            updateProfile { current ->
+            val meta: GradePage.StudentMeta? = runCatching { gradeRepo.fetchAll().meta }.getOrNull()
+            if (meta == null) {
+                setEnrichStatus(EnrichStatus.Failed)
+                return@launch
+            }
+            updateUser { current ->
                 current.copy(
                     college = meta.college?.takeIf { it.isNotBlank() } ?: current.college,
                     major = meta.major?.takeIf { it.isNotBlank() } ?: current.major,
                     className = meta.className?.takeIf { it.isNotBlank() } ?: current.className,
-                    name = base.name.ifBlank { meta.name.orEmpty().ifBlank { current.name } },
-                    studentId = base.studentId.ifBlank { meta.studentId.orEmpty().ifBlank { current.studentId } },
+                    // 姓名仍是占位时用成绩页 meta 的姓名回填——修复旧 `ifBlank` 对"同学"判 false
+                    // 导致真实姓名无法覆盖占位的坑。已自愈（非占位）则不动。
+                    name = if (current.hasPlaceholderName) {
+                        meta.name?.takeIf { it.isNotBlank() } ?: current.name
+                    } else current.name,
+                    studentId = current.studentId.ifBlank { meta.studentId.orEmpty().ifBlank { current.studentId } },
                     cumulativeCredits = meta.totalCredit ?: current.cumulativeCredits,
                 )
             }
+            setEnrichStatus(EnrichStatus.Idle)
         }
     }
 
-    private fun updateProfile(transform: (UserProfile) -> UserProfile) {
-        val current = (_state.value as? UiState.Success)?.data?.user ?: return
-        _state.value = UiState.Success(ProfileData(transform(current)))
+    /** UserCard「加载失败，点击重试」回调：重新打成绩页（上次失败未写缓存，这次会真重连）。 */
+    fun retryEnrich() {
+        if (_state.value !is UiState.Success) return
+        enrichFromGrades()
+    }
+
+    private fun updateUser(transform: (UserProfile) -> UserProfile) {
+        val cur = _state.value as? UiState.Success ?: return
+        _state.value = UiState.Success(cur.data.copy(user = transform(cur.data.user)))
+    }
+
+    private fun setEnrichStatus(status: EnrichStatus) {
+        val cur = _state.value as? UiState.Success ?: return
+        _state.value = UiState.Success(cur.data.copy(enrichStatus = status))
     }
 
     fun logout() {

@@ -96,6 +96,10 @@
     <string name="announcement_search_clear">清除搜索词</string>
     <string name="announcement_search_empty_template">已加载 %1$d 条，未找到「%2$s」</string>
     <string name="announcement_search_load_more">加载更早的通知继续搜索</string>
+    <!-- 详情页：jwc 无会话时返回的"需要登录"占位页，引导走 app 内登录 -->
+    <string name="announcement_login_required_title">登录后查看通知详情</string>
+    <string name="announcement_login_required_desc">这条通知需要登录教务系统后才能查看完整内容</string>
+    <string name="announcement_login_required_action">去登录</string>
 
     <!-- 个人中心 -->
     <string name="profile_title">我的</string>

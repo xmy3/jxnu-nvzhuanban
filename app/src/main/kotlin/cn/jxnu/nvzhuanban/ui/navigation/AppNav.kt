@@ -331,6 +331,14 @@ fun AppNav() {
                 AnnouncementDetailScreen(
                     articleId = articleId,
                     onBack = { nav.popBackStack() },
+                    // 「需要登录」占位页的「去登录」：清空回退栈进 app 内登录页，
+                    // 与会话过期那条 (LaunchedEffect(authState)) 保持一致写法。
+                    onNavigateToLogin = {
+                        nav.navigate(Routes.LOGIN) {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
                 )
             }
         }

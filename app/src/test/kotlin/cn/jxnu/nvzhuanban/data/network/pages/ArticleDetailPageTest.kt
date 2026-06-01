@@ -3,6 +3,7 @@ package cn.jxnu.nvzhuanban.data.network.pages
 import cn.jxnu.nvzhuanban.data.model.ArticleBlock
 import cn.jxnu.nvzhuanban.data.model.InlineRun
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -174,6 +175,40 @@ class ArticleDetailPageTest {
         assertEquals("文档不存在！", parsed.title)
         assertEquals("", parsed.postedAt)
         assertTrue(parsed.blocks.isEmpty())
+    }
+
+    /**
+     * 回归：jwc 无会话访问 ArticlesView.aspx 时返回的占位页（HTTP 200、同域、不重定向，
+     * 所以不会被 JwcResponseGuard 当成会话过期）。标题即「对不起，该文档需要登录后再查看!」，
+     * 页内只有一条指向网页登录的「登录」超链接。应被标记 requiresLogin 并清空正文，
+     * 避免把那条外链渲染成可点击的「登录」→ 跳浏览器官方教务处。
+     */
+    @Test
+    fun `login-required placeholder is flagged and body suppressed`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">对不起，该文档需要登录后再查看!</div>
+                <div class="line text-sub text-center">【时间：2026-05-27 11:18:48】</div>
+                <div id="main-content" class="line padding">
+                  <a href="https://uis.jxnu.edu.cn/cas/login?service=https%3A%2F%2Fjwc.jxnu.edu.cn">登录</a>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        assertTrue("未识别为需要登录占位页", parsed.requiresLogin)
+        assertEquals("对不起，该文档需要登录后再查看!", parsed.title)
+        assertEquals("2026-05-27 11:18:48", parsed.postedAt)
+        assertTrue("需要登录占位页不应保留正文块（含那条外链）", parsed.blocks.isEmpty())
+    }
+
+    @Test
+    fun `normal article is not flagged as login-required`() {
+        val parsed = ArticleDetailPage.parse(sampleHtml("article_detail.html"), baseUri)
+        assertFalse(parsed.requiresLogin)
+        assertTrue("正常文章应有正文块", parsed.blocks.isNotEmpty())
     }
 
     @Test

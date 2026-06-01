@@ -37,6 +37,7 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Today
+import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -98,6 +99,34 @@ import kotlin.math.abs
 private val LEFT_LABEL_WIDTH = 36.dp
 private val SECTIONS = SectionTimetable.SECTION_COUNT
 private val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
+
+/**
+ * 离线提示条：当 [ScheduleScreenState.isOffline] 为真（本次拉取失败、展示的是磁盘缓存）时，
+ * 在表头下方显示一条说明，告诉用户这是上次的课表、下拉可重试，避免误以为是实时数据。
+ */
+@Composable
+private fun OfflineBanner() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.WifiOff,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = "无网络 · 显示上次缓存的课表，下拉可重试",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -167,6 +196,7 @@ fun ScheduleScreen(
                 semesterStart = state.semesterStart,
                 selectedWeek = state.selectedWeek,
             )
+            if (state.isOffline) OfflineBanner()
             StateScaffold(
                 state = state.data,
                 onRetry = viewModel::refresh,
@@ -903,11 +933,9 @@ private fun WeekEditorSheet(
         ) {
             PresetChip("全选") { selected = defaultAll }
             PresetChip("1-8") { selected = (1..minOf(8, totalWeeks)).toSet() }
-            // 慕课：每学期前两周 + 后两周（江师大慕课课程的固定排课模式）
+            // 慕课：江师大慕课课程固定在第 14-15 周排课
             PresetChip("慕课") {
-                val head = (1..minOf(2, totalWeeks)).toSet()
-                val tail = ((totalWeeks - 1).coerceAtLeast(1)..totalWeeks).toSet()
-                selected = head + tail
+                selected = (14..15).filter { it in 1..totalWeeks }.toSet()
             }
         }
         Spacer(height = 14.dp)

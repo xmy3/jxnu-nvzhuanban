@@ -130,8 +130,12 @@ class CasLoginClient(
         runCatching {
             val req = Request.Builder().url(JxnuUrls.USER_DEFAULT).get().build()
             httpClient.client.newCall(req).execute().use { resp ->
-                val finalHost = resp.request.url.host
-                resp.isSuccessful && finalHost == JxnuUrls.JWC_HOST
+                // 复用业务页守卫：HTTP 200 但实为登录页 / 跳 CAS / 跳 SSO 重登页都会抛，
+                // 不抛才算真正的已登录工作台。旧实现只看「200 + 落点在 jwc host」，会把
+                // 「200 渲染的登录页」当成有效会话放行，随后 fetchAndParse 又被同一守卫判
+                // SessionExpired 而降级 → 姓名退化「同学」。两处现在同判定，不再撕裂。
+                JwcResponseGuard.readJwcHtml(resp, "用户首页返回空响应")
+                true
             }
         }.getOrDefault(false)
     }
