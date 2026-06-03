@@ -23,9 +23,14 @@
         </intent>
     </queries>
 
+    <!-- enableOnBackInvokedCallback=false：关闭预测性返回（Predictive Back）。targetSdk 36 下
+         系统默认开启「边缘滑动预览上一界面」的返回动画，这里显式 opt-out，回到无预览的即时返回。
+         不影响 Compose BackHandler / 导航返回 —— androidx 的 OnBackPressedDispatcher 会回退到
+         传统 onBackPressed 分发，ClassroomScreen 的 WebView 返回等逻辑照常工作。 -->
     <application
         android:name=".NvzhuanbanApp"
         android:allowBackup="true"
+        android:enableOnBackInvokedCallback="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"

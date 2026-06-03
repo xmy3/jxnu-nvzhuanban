@@ -1,6 +1,8 @@
 package cn.jxnu.nvzhuanban
 
 import android.app.Application
+import androidx.compose.foundation.ComposeFoundationFlags
+import androidx.compose.foundation.ExperimentalFoundationApi
 import cn.jxnu.nvzhuanban.data.repository.AnnouncementRepository
 import cn.jxnu.nvzhuanban.data.repository.AuthRepository
 import cn.jxnu.nvzhuanban.data.repository.UpdateRepository
@@ -31,6 +33,10 @@ class NvzhuanbanApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // 关掉 foundation 新版文本 context menu，否则 SelectionContainer（通知详情正文）选中
+        // 文字会「弹两次」复制菜单。必须在首个 Composition 之前设置，详见函数注释。
+        disableDuplicateTextContextMenu()
+
         ThemePrefs.init(this)
         AvatarPrefs.init(this)
         ScheduleHeightPrefs.init(this)
@@ -60,6 +66,20 @@ class NvzhuanbanApp : Application() {
                 UpdateRepository.instance.checkIfDue(currentVersionName())
             }
         }
+    }
+
+    /**
+     * foundation 1.8 起 [ComposeFoundationFlags.isNewContextMenuEnabled] 默认 true，启用新版文本
+     * context menu：在 Android 上它给 [androidx.compose.foundation.text.selection.SelectionContainer]
+     * 同时装配「系统平台浮动工具栏」+「Compose 自绘 dropdown」两个 provider 并都渲染出来，长按选中
+     * 正文时**两个复制菜单一起弹**（本 app 仅通知详情 AnnouncementDetailScreen 用了 SelectionContainer，
+     * 故现象集中在通知页）。置 false 回到旧的单一系统 context menu —— 即升级 BOM 前的行为，也是用户要的
+     * 「交给系统」。这是全局开关，必须在首个 Composition 之前赋值（故放 onCreate 最前）；属于
+     * @ExperimentalFoundationApi，将来 BOM 若移除该 flag 会在编译期报错（能被及时发现，不是静默失效）。
+     */
+    @OptIn(ExperimentalFoundationApi::class)
+    private fun disableDuplicateTextContextMenu() {
+        ComposeFoundationFlags.isNewContextMenuEnabled = false
     }
 
     /**
