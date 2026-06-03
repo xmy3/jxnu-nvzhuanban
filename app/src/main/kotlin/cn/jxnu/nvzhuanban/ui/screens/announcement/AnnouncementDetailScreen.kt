@@ -77,6 +77,7 @@ import cn.jxnu.nvzhuanban.ui.components.FullScreenImageViewer
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import java.net.URI
+import kotlin.math.pow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -296,8 +297,10 @@ private fun ParagraphView(runs: List<InlineRun>) {
     val context = LocalContext.current
     val linkColor = MaterialTheme.colorScheme.primary
     val baseColor = MaterialTheme.colorScheme.onSurface
-    val annotated = remember(runs, linkColor, baseColor) {
-        buildParagraph(runs, linkColor, baseColor) { url ->
+    // 正文段落直接坐在 Scaffold 的 background 上（详情页未覆盖 containerColor）。
+    val background = MaterialTheme.colorScheme.background
+    val annotated = remember(runs, linkColor, baseColor, background) {
+        buildParagraph(runs, linkColor, baseColor, background) { url ->
             openExternalHttpUrl(context, url)
         }
     }
@@ -384,7 +387,9 @@ private fun TableCellView(runs: List<InlineRun>, isHeader: Boolean) {
     val context = LocalContext.current
     val linkColor = MaterialTheme.colorScheme.primary
     val baseColor = MaterialTheme.colorScheme.onSurface
-    val annotated = remember(runs, linkColor, baseColor, isHeader) {
+    // 表格单元格行底色是 surface（见 TableBlockView 里的 Row.background）。
+    val background = MaterialTheme.colorScheme.surface
+    val annotated = remember(runs, linkColor, baseColor, background, isHeader) {
         val styled = if (isHeader) {
             // 表头：所有 Text 强制粗体（保留原 color 等其他属性）
             runs.map { run ->
@@ -395,7 +400,7 @@ private fun TableCellView(runs: List<InlineRun>, isHeader: Boolean) {
                 }
             }
         } else runs
-        buildParagraph(styled, linkColor, baseColor) { url ->
+        buildParagraph(styled, linkColor, baseColor, background) { url ->
             openExternalHttpUrl(context, url)
         }
     }
@@ -453,17 +458,18 @@ private fun buildParagraph(
     runs: List<InlineRun>,
     linkColor: Color,
     baseColor: Color,
+    background: Color,
     onLinkClick: (String) -> Unit,
 ): AnnotatedString = buildAnnotatedString {
     for (run in runs) {
         when (run) {
-            is InlineRun.Text -> withStyle(run.style.toSpanStyle(baseColor)) { append(run.text) }
+            is InlineRun.Text -> withStyle(run.style.toSpanStyle(baseColor, background)) { append(run.text) }
             is InlineRun.LineBreak -> append('\n')
             is InlineRun.Link -> {
                 val linkStyles = TextLinkStyles(
                     style = run.style
                         .copy(color = run.style.color ?: linkColor.toArgb())
-                        .toSpanStyle(linkColor)
+                        .toSpanStyle(linkColor, background)
                         .copy(textDecoration = TextDecoration.Underline),
                 )
                 withLink(
@@ -486,14 +492,46 @@ private fun Color.toArgb(): Int = android.graphics.Color.argb(
     (alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt(),
 )
 
-private fun InlineStyle.toSpanStyle(fallbackColor: Color): SpanStyle {
-    val resolvedColor = color?.let { Color(it) } ?: fallbackColor
+/**
+ * jwc 通知正文是 Word 复制粘贴出身，里面的 `style="color:#000"` / `<font color>` 全部按**白底**配色。
+ * 暗色主题下直接套用就会「深色字 + 深色底 = 看不见」（见用户反馈：暗黑模式看不到字）。
+ *
+ * 因此 author 指定的颜色**只在它与当前主题背景 [background] 仍有足够对比度时才保留**，否则回退到
+ * 主题 [fallbackColor]（onSurface）——后者天然与背景对比，任何主题下都读得清。效果：
+ * - 暗色下纯黑 / 深灰正文 → 回退成浅色 onSurface；
+ * - 红色等强调色对比度通常达标 → 原样保留；纯蓝这类在黑底上本就难读的 → 一并回退；
+ * - 亮色模式下常见的深色字对比度极高 → 全部保留，零回归（还顺手修了「白底浅色字」反向边缘情况）。
+ */
+private fun InlineStyle.toSpanStyle(fallbackColor: Color, background: Color): SpanStyle {
+    val authored = color?.let { Color(it) }
+    val resolvedColor =
+        if (authored != null && contrastRatio(authored, background) >= MIN_TEXT_CONTRAST) authored
+        else fallbackColor
     return SpanStyle(
         color = resolvedColor,
         fontWeight = if (bold) FontWeight.SemiBold else null,
         fontStyle = if (italic) FontStyle.Italic else null,
         textDecoration = if (underline) TextDecoration.Underline else null,
     )
+}
+
+/** 低于该 WCAG 对比度（AA 大字号阈值）的内联色判定为「在当前背景上不可读」，回退到主题色。 */
+private const val MIN_TEXT_CONTRAST = 3.0f
+
+/** 两色的 WCAG 对比度（1..21）。 */
+private fun contrastRatio(a: Color, b: Color): Float {
+    val la = a.wcagLuminance()
+    val lb = b.wcagLuminance()
+    val lighter = maxOf(la, lb)
+    val darker = minOf(la, lb)
+    return (lighter + 0.05f) / (darker + 0.05f)
+}
+
+/** WCAG 相对亮度。Compose [Color] 的 red/green/blue 是 sRGB 伽马编码分量（0..1），正是公式所需输入。 */
+private fun Color.wcagLuminance(): Float {
+    fun linear(c: Float): Float =
+        if (c <= 0.03928f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f)
+    return 0.2126f * linear(red) + 0.7152f * linear(green) + 0.0722f * linear(blue)
 }
 
 internal fun openExternalHttpUrl(context: Context, url: String) {
