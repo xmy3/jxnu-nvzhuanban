@@ -61,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -490,6 +491,10 @@ private fun ScheduleGrid(
     // 阈值用 px：滑动距离超过 ~80dp 才认为是切周，避免误触
     val swipeThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 80.dp.toPx() }
     val touchSlop = LocalViewConfiguration.current.touchSlop
+    // pointerInput 的 key 是 Unit（手势协程不重启），而 onSwipeLeft/Right 闭包了 selectedWeek 快照。
+    // 用 rememberUpdatedState 让手势回调始终读到最新一帧的 lambda，否则切周后横滑会按进入时的旧周次切。
+    val currentSwipeLeft by rememberUpdatedState(onSwipeLeft)
+    val currentSwipeRight by rememberUpdatedState(onSwipeRight)
 
     // 格高：prefs 是真值，手势期间用 liveDp 驱动 UI 实时跟手，松手时一次性落盘。
     // LaunchedEffect 处理"外部把 prefs 改了"的极端路径（目前没有别处会改，但留着便宜）。
@@ -572,8 +577,8 @@ private fun ScheduleGrid(
                         }
                     } else {
                         when {
-                            horizontalAccum <= -swipeThresholdPx -> onSwipeLeft()
-                            horizontalAccum >= swipeThresholdPx -> onSwipeRight()
+                            horizontalAccum <= -swipeThresholdPx -> currentSwipeLeft()
+                            horizontalAccum >= swipeThresholdPx -> currentSwipeRight()
                         }
                     }
                 }
@@ -782,6 +787,9 @@ private fun EmptyWeek(
     // 阈值与 ScheduleGrid 保持一致：80dp 才触发；避免下拉刷新被误判成切周
     val swipeThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 80.dp.toPx() }
     val dragAccum = remember { FloatArray(1) }
+    // 同 ScheduleGrid：pointerInput(Unit) 持有首帧闭包，rememberUpdatedState 读最新切周回调
+    val currentSwipeLeft by rememberUpdatedState(onSwipeLeft)
+    val currentSwipeRight by rememberUpdatedState(onSwipeRight)
     // verticalScroll + 上下 Spacer 撑空间：保证 PullToRefreshBox 在空数据时也能识别下拉手势
     Column(
         modifier = Modifier
@@ -791,8 +799,8 @@ private fun EmptyWeek(
                     onDragStart = { dragAccum[0] = 0f },
                     onDragEnd = {
                         when {
-                            dragAccum[0] <= -swipeThresholdPx -> onSwipeLeft()
-                            dragAccum[0] >= swipeThresholdPx -> onSwipeRight()
+                            dragAccum[0] <= -swipeThresholdPx -> currentSwipeLeft()
+                            dragAccum[0] >= swipeThresholdPx -> currentSwipeRight()
                         }
                         dragAccum[0] = 0f
                     },

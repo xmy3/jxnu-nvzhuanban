@@ -12,11 +12,13 @@ import cn.jxnu.nvzhuanban.data.network.pages.UserDefaultPage
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
 import cn.jxnu.nvzhuanban.data.storage.CourseOverridesStore
 import cn.jxnu.nvzhuanban.data.widget.WidgetSnapshotStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * 登录态仓库（Phase 3：免登录）。
@@ -77,22 +79,26 @@ class AuthRepository private constructor(
     }
 
     private suspend fun onLoginSuccess(username: String, password: String) {
-        if (storage.rememberMe) {
-            val saved = creds.save(username, password)
-            if (saved) {
-                storage.lastUsername = username
+        // 凭证落盘是 Tink 加密 + fsync 的同步写（save 用 commit 才能拿到成败位），必须切 IO，
+        // 否则手动登录这一下会在主线程（viewModelScope 默认 Main）卡顿，低端机上是 ANR 隐患。
+        withContext(Dispatchers.IO) {
+            if (storage.rememberMe) {
+                val saved = creds.save(username, password)
+                if (saved) {
+                    storage.lastUsername = username
+                } else {
+                    // EncryptedSharedPreferences 写失败（厂商魔改 ROM / keystore 损坏 / 设备空间满）
+                    // 之前的策略是静默关 rememberMe，用户视角"登录成功"但下次启动还得重新输——
+                    // 体验非常古怪。这里把一次性警告塞到 lastLoginWarning，由登录页 ViewModel
+                    // 在 submit 成功后取走显示。
+                    storage.rememberMe = false
+                    storage.lastUsername = null
+                    creds.clear()
+                    lastLoginWarning = "本机无法安全保存密码，已关闭自动登录"
+                }
             } else {
-                // EncryptedSharedPreferences 写失败（厂商魔改 ROM / keystore 损坏 / 设备空间满）
-                // 之前的策略是静默关 rememberMe，用户视角"登录成功"但下次启动还得重新输——
-                // 体验非常古怪。这里把一次性警告塞到 lastLoginWarning，由登录页 ViewModel
-                // 在 submit 成功后取走显示。
-                storage.rememberMe = false
-                storage.lastUsername = null
                 creds.clear()
-                lastLoginWarning = "本机无法安全保存密码，已关闭自动登录"
             }
-        } else {
-            creds.clear()
         }
         val profile = runCatching { UserDefaultPage.fetchAndParse(username) }
             .getOrNull()
