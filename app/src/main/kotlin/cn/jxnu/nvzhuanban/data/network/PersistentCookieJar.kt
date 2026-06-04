@@ -23,10 +23,13 @@ import kotlin.concurrent.write
  *
  * 该 CookieJar 必须**先于**任何 OkHttp 请求构造（即 Application.onCreate 里 init）。
  */
-class PersistentCookieJar(context: Context) : CookieJar {
+class PersistentCookieJar internal constructor(filesDir: File) : CookieJar {
 
-    private val cookieFile: File = File(context.applicationContext.filesDir, "jxnu_cookies.tsv")
-    private val tmpFile: File = File(context.applicationContext.filesDir, "jxnu_cookies.tsv.tmp")
+    /** 生产构造从 [Context] 取 filesDir；测试走 internal 构造器直接传临时目录（脱离 Android）。 */
+    constructor(context: Context) : this(context.applicationContext.filesDir)
+
+    private val cookieFile: File = File(filesDir, "jxnu_cookies.tsv")
+    private val tmpFile: File = File(filesDir, "jxnu_cookies.tsv.tmp")
     private val byDomain = ConcurrentHashMap<String, MutableList<Cookie>>()
     private val lock = ReentrantReadWriteLock()
 
