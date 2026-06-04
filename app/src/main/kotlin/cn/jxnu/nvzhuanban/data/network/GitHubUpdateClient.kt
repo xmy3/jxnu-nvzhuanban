@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit
  * `/releases/latest` 默认只返回非 prerelease 的 release，所以拿到 prerelease 是异常情况，
  * [SemVer.fromString] 会因 `-rc1` 后缀返回 null，调用方静默不提示。
  */
-class GitHubUpdateClient(
+open class GitHubUpdateClient(
     private val userAgent: String = "nvzhuanban-android",
 ) {
 
@@ -47,7 +47,7 @@ class GitHubUpdateClient(
      * 拉一次 latest release。
      * @throws GithubException 网络 / HTTP / 解析任意环节失败
      */
-    suspend fun fetchLatest(): AppRelease = withContext(Dispatchers.IO) {
+    open suspend fun fetchLatest(): AppRelease = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(API_URL)
             .header("User-Agent", userAgent)

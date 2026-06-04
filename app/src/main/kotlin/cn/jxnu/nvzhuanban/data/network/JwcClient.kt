@@ -58,23 +58,42 @@ object JwcClient {
      */
     private suspend inline fun <T> runWithSessionRecovery(crossinline block: () -> T): T =
         withContext(Dispatchers.IO) {
-            try {
-                block()
-            } catch (e: JwcException) {
-                if (e.error != JwcError.SessionExpired) throw e
-                val ok = SessionRecovery.tryReauthSilently()
-                if (!ok) {
-                    SessionEvents.notifyExpired()
-                    throw e
-                }
-                // reauth 成功，重放原请求。二次仍然 SessionExpired（极罕见：CAS 刚登又被踢）
-                // 不再尝试 reauth，直接透传 + 广播。
-                try {
-                    block()
-                } catch (e2: JwcException) {
-                    if (e2.error == JwcError.SessionExpired) SessionEvents.notifyExpired()
-                    throw e2
-                }
-            }
+            withSessionRecovery(
+                reauth = { SessionRecovery.tryReauthSilently() },
+                notifyExpired = { SessionEvents.notifyExpired() },
+                block = { block() },
+            )
         }
+}
+
+/**
+ * "会话过期 → reauth 一次 → 重放一次" 的纯容错骨架，从 [JwcClient] 的 runWithSessionRecovery
+ * 抽出以便单测：不含 IO dispatcher / 具体单例依赖，[reauth] 与 [notifyExpired] 由调用方注入。
+ *
+ * 行为契约（由 JwcClientSessionRecoveryTest 锁定）：
+ *  - [block] 成功 → 直接返回，绝不 reauth / notify
+ *  - [block] 抛非 SessionExpired 的 [JwcException] → 原样透传，不 reauth
+ *  - SessionExpired 且 [reauth] 返回 false → [notifyExpired] 一次并透传原异常
+ *  - SessionExpired 且 [reauth] 返回 true → 重放一次 [block]；成功则返回其结果
+ *  - 重放仍抛 SessionExpired → [notifyExpired] 一次并透传（**不再二次 reauth**）
+ *  - 重放抛其它异常 → 原样透传，不 notify
+ */
+internal suspend fun <T> withSessionRecovery(
+    reauth: suspend () -> Boolean,
+    notifyExpired: () -> Unit,
+    block: suspend () -> T,
+): T = try {
+    block()
+} catch (e: JwcException) {
+    if (e.error != JwcError.SessionExpired) throw e
+    if (!reauth()) {
+        notifyExpired()
+        throw e
+    }
+    try {
+        block()
+    } catch (e2: JwcException) {
+        if (e2.error == JwcError.SessionExpired) notifyExpired()
+        throw e2
+    }
 }
