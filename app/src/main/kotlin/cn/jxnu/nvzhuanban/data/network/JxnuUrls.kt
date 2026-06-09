@@ -1,7 +1,7 @@
 package cn.jxnu.nvzhuanban.data.network
 
-import android.util.Base64
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.util.Base64
 
 /**
  * JXNU 教务系统所有 URL 集中管理。
@@ -42,15 +42,15 @@ object JxnuUrls {
 
     /** 教工基本信息页。`userNum` 是教号的 base64（搜索结果直接给出，不要再次编码）。 */
     fun teacherDetailUrl(userNum: String): String =
-        "$JWC_BASE/MyControl/All_Display.aspx?UserControl=All_TeacherInfor.ascx&UserType=Teacher&UserNum=$userNum"
+        userDisplayUrl("All_TeacherInfor.ascx", "Teacher", userNum)
 
     /** 教工课表页。`userNum` 是教号的 base64。 */
     fun teacherScheduleUrl(userNum: String): String =
-        "$JWC_BASE/MyControl/All_Display.aspx?UserControl=Xfz_Kcb.ascx&UserType=Teacher&UserNum=$userNum"
+        userDisplayUrl("Xfz_Kcb.ascx", "Teacher", userNum)
 
     /** 教工头像，`userNum` 是教号的 base64（与 [teacherDetailUrl] 同一参数）。 */
     fun teacherPhotoUrl(userNum: String): String =
-        "$JWC_BASE/MyControl/All_PhotoShow.aspx?UserType=Teacher&UserNum=$userNum"
+        photoUrl("Teacher", userNum)
 
     /**
      * 学生检索页（公共服务 → 学生信息）。结构和 [PAGE_TEACHER_SEARCH] 几乎一致：
@@ -61,15 +61,15 @@ object JxnuUrls {
 
     /** 学生基本信息页。`userNum` 是学号的 base64（搜索结果直接给出）。 */
     fun studentDetailUrl(userNum: String): String =
-        "$JWC_BASE/MyControl/All_Display.aspx?UserControl=All_StudentInfor.ascx&UserType=Student&UserNum=$userNum"
+        userDisplayUrl("All_StudentInfor.ascx", "Student", userNum)
 
     /** 学生课表页。与教师课表共用 [Xfz_Kcb.ascx] UserControl，只是 UserType 不同。 */
     fun studentScheduleUrl(userNum: String): String =
-        "$JWC_BASE/MyControl/All_Display.aspx?UserControl=Xfz_Kcb.ascx&UserType=Student&UserNum=$userNum"
+        userDisplayUrl("Xfz_Kcb.ascx", "Student", userNum)
 
     /** 学生头像，`userNum` 是学号的 base64。 */
     fun studentPhotoUrl(userNum: String): String =
-        "$JWC_BASE/MyControl/All_PhotoShow.aspx?UserType=Student&UserNum=$userNum"
+        photoUrl("Student", userNum)
 
     /**
      * 期中 / 期末考试出分速查页。
@@ -95,9 +95,24 @@ object JxnuUrls {
 
     /** 用户头像，UserNum 是学号的 base64。 */
     fun userPhotoUrl(studentId: String): String {
-        val encoded = Base64.encodeToString(studentId.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        return "$JWC_BASE/MyControl/All_PhotoShow.aspx?UserNum=$encoded&UserType=Student"
+        val encoded = Base64.getEncoder().encodeToString(studentId.toByteArray(Charsets.UTF_8))
+        return photoUrl("Student", encoded)
     }
+
+    private fun userDisplayUrl(userControl: String, userType: String, userNum: String): String =
+        "$JWC_BASE/MyControl/All_Display.aspx".toHttpUrl().newBuilder()
+            .addQueryParameter("UserControl", userControl)
+            .addQueryParameter("UserType", userType)
+            .addQueryParameter("UserNum", userNum)
+            .build()
+            .toString()
+
+    private fun photoUrl(userType: String, userNum: String): String =
+        "$JWC_BASE/MyControl/All_PhotoShow.aspx".toHttpUrl().newBuilder()
+            .addQueryParameter("UserType", userType)
+            .addQueryParameter("UserNum", userNum)
+            .build()
+            .toString()
 
     /**
      * 构造 CAS 登录的完整 URL，service 参数已正确编码。
@@ -106,7 +121,7 @@ object JxnuUrls {
      *   https://uis.jxnu.edu.cn/cas/login?service=https%3A%2F%2Fjwc.jxnu.edu.cn%2Fsso%2Flogin.aspx%3FtargetUrl%3D%7Bbase64%7DaHR0cHM6...
      */
     fun casLoginEntry(): String {
-        val targetB64 = Base64.encodeToString(PORTAL_INDEX.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        val targetB64 = Base64.getEncoder().encodeToString(PORTAL_INDEX.toByteArray(Charsets.UTF_8))
         val ssoTarget = "$SSO_CALLBACK?targetUrl={base64}$targetB64"
         return CAS_LOGIN.toHttpUrl().newBuilder()
             .addQueryParameter("service", ssoTarget)

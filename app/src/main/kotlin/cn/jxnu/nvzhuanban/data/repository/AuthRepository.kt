@@ -1,6 +1,8 @@
 package cn.jxnu.nvzhuanban.data.repository
 
 import android.content.Context
+import androidx.glance.appwidget.GlanceAppWidgetManager
+import androidx.glance.appwidget.updateAll
 import cn.jxnu.nvzhuanban.data.model.AuthState
 import cn.jxnu.nvzhuanban.data.model.UserProfile
 import cn.jxnu.nvzhuanban.data.model.hasPlaceholderName
@@ -12,6 +14,8 @@ import cn.jxnu.nvzhuanban.data.network.pages.UserDefaultPage
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
 import cn.jxnu.nvzhuanban.data.storage.CourseOverridesStore
 import cn.jxnu.nvzhuanban.data.widget.WidgetSnapshotStore
+import cn.jxnu.nvzhuanban.ui.widget.TodayScheduleWidget
+import cn.jxnu.nvzhuanban.ui.widget.WidgetUpdateScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -100,6 +104,7 @@ class AuthRepository private constructor(
                 creds.clear()
             }
         }
+        WidgetSnapshotStore.resumeWrites()
         val profile = runCatching { UserDefaultPage.fetchAndParse(username) }
             .getOrNull()
             ?: UserDefaultPage.parse(username, "")
@@ -250,7 +255,18 @@ class AuthRepository private constructor(
         StudentDetailRepository.instance.clearCache()
         CourseOverridesStore.clearAll()
         AnnouncementReadAnchor.clear()
-        runCatching { WidgetSnapshotStore.clear(appContext) }
+        clearWidgetSnapshotOnSignOut()
+    }
+
+    private suspend fun clearWidgetSnapshotOnSignOut() {
+        WidgetSnapshotStore.clear(appContext)
+        WidgetUpdateScheduler.cancel(appContext)
+        runCatching {
+            val mgr = GlanceAppWidgetManager(appContext)
+            if (mgr.getGlanceIds(TodayScheduleWidget::class.java).isNotEmpty()) {
+                TodayScheduleWidget().updateAll(appContext)
+            }
+        }
     }
 
     /** 给登录页预填学号用。 */

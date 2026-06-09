@@ -42,9 +42,7 @@ class ArticleDetailRepository {
         detail
     }
 
-    fun clearCache() {
-        // 缓存读写都在 mutex 内，但清空被退出登录之类的非协程上下文调用，
-        // 这里允许非同步清空：竞态最差是一次过期数据被读到，下次 refresh 即自愈
+    suspend fun clearCache() = mutex.withLock {
         cache.clear()
     }
 

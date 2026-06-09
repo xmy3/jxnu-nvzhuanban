@@ -216,6 +216,8 @@ object WidgetSnapshotStore {
 
     private const val FILE_NAME = "widget_snapshot.json"
     private const val TMP_NAME = "widget_snapshot.json.tmp"
+    @Volatile private var writeGeneration: Long = 0L
+    @Volatile private var stopped: Boolean = false
 
     fun file(context: Context): File =
         File(context.applicationContext.filesDir, FILE_NAME)
@@ -224,7 +226,21 @@ object WidgetSnapshotStore {
         File(context.applicationContext.filesDir, TMP_NAME)
 
     @Synchronized
+    fun generation(): Long = writeGeneration
+
+    @Synchronized
+    fun resumeWrites() {
+        stopped = false
+        writeGeneration++
+    }
+
     fun save(context: Context, snapshot: ScheduleSnapshot) {
+        save(context, snapshot, generation())
+    }
+
+    @Synchronized
+    fun save(context: Context, snapshot: ScheduleSnapshot, generation: Long) {
+        if (stopped || generation != writeGeneration) return
         val target = file(context)
         val tmp = tmpFile(context)
         runCatching {
@@ -252,6 +268,8 @@ object WidgetSnapshotStore {
     /** 退出登录时删除磁盘 snapshot，让 widget 立刻显示"打开 App 加载课表"。 */
     @Synchronized
     fun clear(context: Context) {
+        stopped = true
+        writeGeneration++
         runCatching { file(context).delete() }
         runCatching { tmpFile(context).delete() }
     }

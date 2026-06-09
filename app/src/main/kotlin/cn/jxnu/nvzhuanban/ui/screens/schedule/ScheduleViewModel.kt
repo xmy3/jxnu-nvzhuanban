@@ -330,8 +330,9 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
             semesterStart = repo.currentSemesterStart(),
             all = all,
         )
+        val snapshotGeneration = WidgetSnapshotStore.generation()
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            WidgetSnapshotStore.save(ctx, snap)
+            WidgetSnapshotStore.save(ctx, snap, snapshotGeneration)
             runCatching {
                 // 只通知已经被用户添加到桌面的 widget，避免没有 widget 时报错
                 val mgr = GlanceAppWidgetManager(ctx)

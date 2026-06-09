@@ -103,6 +103,7 @@ fun ProfileScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val latestRelease by viewModel.latestRelease.collectAsStateWithLifecycle()
+    val isLoggingOut by viewModel.isLoggingOut.collectAsStateWithLifecycle()
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
@@ -201,18 +202,30 @@ fun ProfileScreen(
 
     if (showLogoutConfirm) {
         AlertDialog(
-            onDismissRequest = { showLogoutConfirm = false },
+            onDismissRequest = { if (!isLoggingOut) showLogoutConfirm = false },
             title = { Text("退出登录") },
             text = { Text("将清除本地登录态，需要重新输入账号密码。是否继续？") },
             confirmButton = {
-                TextButton(onClick = {
-                    showLogoutConfirm = false
-                    viewModel.logout()
-                    onLogout()
-                }) { Text("退出", color = MaterialTheme.colorScheme.error) }
+                TextButton(
+                    enabled = !isLoggingOut,
+                    onClick = {
+                        viewModel.logout {
+                            showLogoutConfirm = false
+                            onLogout()
+                        }
+                    },
+                ) {
+                    Text(
+                        if (isLoggingOut) "退出中..." else "退出",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             },
             dismissButton = {
-                TextButton(onClick = { showLogoutConfirm = false }) { Text("取消") }
+                TextButton(
+                    enabled = !isLoggingOut,
+                    onClick = { showLogoutConfirm = false },
+                ) { Text("取消") }
             },
         )
     }
