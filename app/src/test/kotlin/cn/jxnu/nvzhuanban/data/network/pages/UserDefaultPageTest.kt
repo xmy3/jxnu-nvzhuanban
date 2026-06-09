@@ -56,14 +56,15 @@ class UserDefaultPageTest {
 
     @Test
     fun `generates a photo url that points at jwc PhotoShow endpoint`() {
-        // 注意：纯 JVM 单测里 android.util.Base64 不可用（开 returnDefaultValues 后返回 null），
-        // 所以这里不验 base64 内容，仅验 URL 由 JxnuUrls.userPhotoUrl 生成（指向 jwc 头像端点）。
-        // 真实编码逻辑由 instrumented test 覆盖更合适。
         val profile = UserDefaultPage.parse("20250101", FIXTURE_NORMAL)
         assertTrue("应当生成头像 URL", !profile.avatarUrl.isNullOrBlank())
         assertTrue(
             "avatarUrl 应指向 All_PhotoShow 端点: ${profile.avatarUrl}",
             profile.avatarUrl!!.contains("All_PhotoShow.aspx"),
+        )
+        assertTrue(
+            "avatarUrl 应携带 base64 编码后的 UserNum: ${profile.avatarUrl}",
+            profile.avatarUrl!!.contains("UserNum=MjAyNTAxMDE%3D"),
         )
     }
 

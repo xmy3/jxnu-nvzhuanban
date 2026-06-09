@@ -21,7 +21,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class ProfileData(
     val user: UserProfile,
@@ -66,6 +68,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     private val _checkResult = MutableSharedFlow<UpdateCheckResult>(extraBufferCapacity = 1)
     val checkResult: SharedFlow<UpdateCheckResult> = _checkResult.asSharedFlow()
+
+    private val _isLoggingOut = MutableStateFlow(false)
+    val isLoggingOut: StateFlow<Boolean> = _isLoggingOut.asStateFlow()
 
     init { load() }
 
@@ -141,10 +146,19 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         _state.value = UiState.Success(cur.data.copy(enrichStatus = status))
     }
 
-    fun logout() {
+    fun logout(onLoggedOut: () -> Unit) {
         // logout 现在是 suspend：需要按顺序清掉 6 个 Repository 缓存 + 课程覆盖 + 通知锚点 + widget snapshot
+        if (_isLoggingOut.value) return
+        _isLoggingOut.value = true
         viewModelScope.launch {
-            authRepo.logout()
+            try {
+                withContext(NonCancellable) {
+                    authRepo.logout()
+                }
+                onLoggedOut()
+            } finally {
+                _isLoggingOut.value = false
+            }
         }
     }
 
