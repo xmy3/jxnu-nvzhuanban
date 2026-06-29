@@ -2,6 +2,16 @@
 
 记录女专办 Android 客户端的版本变更。版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)，`versionCode` 编码规则为 `major*1000 + minor*10 + patch`（例：1.3.0 → 1030）。
 
+## [1.2.3] - 2026-06-29
+
+### 登录与会话
+- 修复部分设备上「下次自动登录」无法长期生效的问题：当 Android Keystore / EncryptedSharedPreferences 因备份迁移、旧 keyset 损坏或系统密钥失效而无法打开时，现在会清理本地损坏的加密凭据并重建安全存储。
+- 自动登录仍只使用 Android Keystore + EncryptedSharedPreferences；不会退化为明文保存密码。已损坏的旧凭据不可恢复，用户重新登录一次后即可重新保存。
+
+### 内部
+- 加密凭据存储新增自愈路径：先重建损坏的 `jxnu_secure_creds` 文件，必要时重置本 App 使用的默认 MasterKey alias，避免安全存储永久不可用。
+- 保持备份排除规则不变，登录 cookie、自动登录凭据和 widget 快照仍不会随 Android cloud backup / device transfer 迁移。
+
 ## [1.2.2] - 2026-06-09
 
 ### 登录与隐私

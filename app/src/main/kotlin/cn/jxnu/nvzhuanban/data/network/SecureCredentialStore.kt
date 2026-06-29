@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.io.File
+import java.security.KeyStore
 
 /**
  * 加密凭证存储。仅在用户勾选「记住账号」时存学号 + 密码。
@@ -66,7 +68,25 @@ class SecureCredentialStore(context: Context) {
      * 创建（或恢复）加密 prefs。硬件密钥不可用（厂商魔改 ROM / keystore 损坏）时返回 null，
      * 上层会禁用自动登录；绝不退化为明文保存统一身份认证密码。
      */
-    private fun createEncryptedPrefsOrNull(context: Context): SharedPreferences? = runCatching {
+    private fun createEncryptedPrefsOrNull(context: Context): SharedPreferences? {
+        createEncryptedPrefs(context).getOrNull()?.let { return it }
+
+        // Auto Backup / device-transfer or a broken keystore can leave an encrypted prefs file
+        // that this install can no longer decrypt. If we return null forever, "next auto login"
+        // becomes permanently unavailable until the user clears app data. Drop only the local
+        // credential store and recreate it so future successful logins can be saved again.
+        clearEncryptedPrefsFile(context)
+        createEncryptedPrefs(context).getOrNull()?.let { return it }
+
+        // If the prefs file was not the problem, the app's master-key alias itself may be invalid.
+        // This app uses the default MasterKey only for SecureCredentialStore, so resetting it is a
+        // contained repair: old saved credentials are unrecoverable, but the store becomes usable.
+        resetMasterKey()
+        clearEncryptedPrefsFile(context)
+        return createEncryptedPrefs(context).getOrNull()
+    }
+
+    private fun createEncryptedPrefs(context: Context): Result<SharedPreferences> = runCatching {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
@@ -77,7 +97,30 @@ class SecureCredentialStore(context: Context) {
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
-    }.getOrNull()
+    }
+
+    private fun clearEncryptedPrefsFile(context: Context) {
+        runCatching {
+            context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        }
+        runCatching {
+            val sharedPrefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
+            File(sharedPrefsDir, "$FILE_NAME.xml").delete()
+            File(sharedPrefsDir, "$FILE_NAME.xml.bak").delete()
+        }
+    }
+
+    private fun resetMasterKey() {
+        runCatching {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            if (keyStore.containsAlias(MasterKey.DEFAULT_MASTER_KEY_ALIAS)) {
+                keyStore.deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+            }
+        }
+    }
 
     private fun clearLegacyPlaintextFallback(context: Context) {
         context.getSharedPreferences("${FILE_NAME}_fallback", Context.MODE_PRIVATE)
