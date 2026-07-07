@@ -24,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,6 +42,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +62,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.jxnu.nvzhuanban.R
 import cn.jxnu.nvzhuanban.data.model.Course
 import cn.jxnu.nvzhuanban.data.network.pages.SchedulePage
+import cn.jxnu.nvzhuanban.data.storage.SchedulePalette
+import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import kotlinx.coroutines.delay
@@ -108,6 +113,7 @@ fun ScheduleScreen(
     var selectedCourse by remember { mutableStateOf<Course?>(null) }
     var editingWeeksFor by remember { mutableStateOf<Course?>(null) }
     var showSemesterSheet by remember { mutableStateOf(false) }
+    var showPaletteSheet by remember { mutableStateOf(false) }
 
     // 课程详情 / 学期选择 / 周次编辑 sheet 开着时拦截系统返回键 → 先关 sheet 而不是退出 App。
     // ModalBottomSheet 自身在新版会响应返回键调 onDismissRequest，这里显式拦截做兜底
@@ -119,6 +125,9 @@ fun ScheduleScreen(
     }
     BackHandler(enabled = showSemesterSheet) {
         showSemesterSheet = false
+    }
+    BackHandler(enabled = showPaletteSheet) {
+        showPaletteSheet = false
     }
 
     // 「今天」做成可观察状态：页面驻留跨过 00:00（尤其周日→周一）后，「今」列头、今日列底色
@@ -151,6 +160,9 @@ fun ScheduleScreen(
                     )
                 },
                 actions = {
+                    IconButton(onClick = { showPaletteSheet = true }) {
+                        Icon(Icons.Outlined.Palette, contentDescription = stringResource(R.string.schedule_palette_action))
+                    }
                     IconButton(onClick = { viewModel.jumpToToday() }) {
                         Icon(Icons.Outlined.Today, contentDescription = stringResource(R.string.schedule_today))
                     }
@@ -269,6 +281,96 @@ fun ScheduleScreen(
                 },
             )
         }
+    }
+
+    if (showPaletteSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showPaletteSheet = false },
+            sheetState = sheetState,
+        ) {
+            PalettePickerSheet(
+                selected = ThemePrefs.schedulePalette.collectAsState().value,
+                onSelect = { palette ->
+                    // 立即生效不关面板：sheet 只占屏幕下半，网格在上方同步换色，
+                    // 用户可以连点几个方案实时对比，选完自己下滑关闭
+                    ThemePrefs.setSchedulePalette(palette)
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 课表配色方案选择面板。每行 = 方案名 + 简介 + 12 色色板预览；点击立刻持久化并全局生效
+ * （课表网格 / 课程详情色块 / 他人课表共用 [ThemePrefs.schedulePalette]）。
+ */
+@Composable
+private fun PalettePickerSheet(
+    selected: SchedulePalette,
+    onSelect: (SchedulePalette) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.schedule_palette_title),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+        SchedulePalette.entries.forEach { palette ->
+            val isSelected = palette == selected
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onSelect(palette) }
+                    .background(
+                        if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                        else Color.Transparent,
+                    )
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = palette.label,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = palette.description,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        palette.colors.forEach { c ->
+                            Spacer(
+                                modifier = Modifier
+                                    .size(width = 16.dp, height = 20.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(c),
+                            )
+                        }
+                    }
+                }
+                if (isSelected) {
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.Outlined.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
     }
 }
 

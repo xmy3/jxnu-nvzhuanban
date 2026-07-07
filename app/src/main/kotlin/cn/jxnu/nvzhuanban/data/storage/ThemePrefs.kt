@@ -23,6 +23,26 @@ enum class ThemeMode(val storageValue: String) {
 }
 
 /**
+ * 课表课程卡的配色方案。这里只定枚举与持久化标识；每个方案的具体色板（12 色）在 UI 层
+ * [cn.jxnu.nvzhuanban.ui.screens.schedule] 的 SchedulePalettes.kt 里定义——storage 不依赖 Compose。
+ *
+ * 所有方案共享同一约束：色板需保证其上白色 9sp 小字对比度 ≥ 4.5:1（见 SchedulePalettes.kt
+ * 顶部注释与 SchedulePaletteContrastTest）。
+ */
+enum class SchedulePalette(val storageValue: String) {
+    CLASSIC("classic"),
+    MORANDI("morandi"),
+    OCEAN("ocean"),
+    SUNSET("sunset"),
+    FOREST("forest");
+
+    companion object {
+        fun fromStorage(raw: String?): SchedulePalette =
+            entries.firstOrNull { it.storageValue == raw } ?: CLASSIC
+    }
+}
+
+/**
  * 单例持久化主题选择。
  *
  * 用 SharedPreferences 而非 DataStore，理由与 [cn.jxnu.nvzhuanban.data.network.AuthStorage] 一致：
@@ -33,6 +53,7 @@ object ThemePrefs {
     private const val PREF_NAME = "theme_prefs"
     private const val KEY_MODE = "mode"
     private const val KEY_DYNAMIC = "dynamic_color"
+    private const val KEY_SCHEDULE_PALETTE = "schedule_palette"
 
     private lateinit var sp: SharedPreferences
     private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
@@ -42,11 +63,16 @@ object ThemePrefs {
     private val _dynamicColor = MutableStateFlow(true)
     val dynamicColor: StateFlow<Boolean> = _dynamicColor.asStateFlow()
 
+    // 课表配色方案；跟 themeMode 一样是外观偏好，登出**不**清（换账号不影响审美选择）
+    private val _schedulePalette = MutableStateFlow(SchedulePalette.CLASSIC)
+    val schedulePalette: StateFlow<SchedulePalette> = _schedulePalette.asStateFlow()
+
     fun init(context: Context) {
         if (::sp.isInitialized) return
         sp = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         _themeMode.value = ThemeMode.fromStorage(sp.getString(KEY_MODE, null))
         _dynamicColor.value = sp.getBoolean(KEY_DYNAMIC, true)
+        _schedulePalette.value = SchedulePalette.fromStorage(sp.getString(KEY_SCHEDULE_PALETTE, null))
     }
 
     fun setMode(mode: ThemeMode) {
@@ -61,5 +87,11 @@ object ThemePrefs {
         if (!::sp.isInitialized) return
         sp.edit().putBoolean(KEY_DYNAMIC, enabled).apply()
         _dynamicColor.value = enabled
+    }
+
+    fun setSchedulePalette(palette: SchedulePalette) {
+        if (!::sp.isInitialized) return
+        sp.edit().putString(KEY_SCHEDULE_PALETTE, palette.storageValue).apply()
+        _schedulePalette.value = palette
     }
 }

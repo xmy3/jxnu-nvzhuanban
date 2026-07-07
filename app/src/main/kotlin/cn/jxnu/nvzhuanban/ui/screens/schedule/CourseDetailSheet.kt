@@ -22,6 +22,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,9 +33,12 @@ import androidx.compose.ui.unit.dp
 import cn.jxnu.nvzhuanban.data.model.Course
 import cn.jxnu.nvzhuanban.data.model.SectionTimetable
 import cn.jxnu.nvzhuanban.data.model.formatCredit
+import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
 
 @Composable
 internal fun CourseDetailSheet(course: Course, weekTotal: Int, onEditWeeks: () -> Unit) {
+    // 标题色块跟随课表当前配色方案，与网格里这门课的卡片颜色保持一致
+    val palette by ThemePrefs.schedulePalette.collectAsState()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -45,7 +50,7 @@ internal fun CourseDetailSheet(course: Course, weekTotal: Int, onEditWeeks: () -
                 modifier = Modifier
                     .size(width = 4.dp, height = 28.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(courseColor(course)),
+                    .background(courseColor(course, palette)),
             )
             Spacer(Modifier.width(12.dp))
             Text(

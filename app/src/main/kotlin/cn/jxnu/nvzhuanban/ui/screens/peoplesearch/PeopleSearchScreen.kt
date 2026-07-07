@@ -20,6 +20,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
@@ -29,10 +31,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -80,6 +84,7 @@ fun PeopleSearchScreen(
     viewModel: PeopleSearchViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val history by viewModel.history.collectAsStateWithLifecycle()
     var type by rememberSaveable { mutableStateOf(PersonType.TEACHER) }
     var keyword by rememberSaveable { mutableStateOf("") }
     var field by rememberSaveable { mutableStateOf(PeopleSearchField.NAME) }
@@ -89,8 +94,9 @@ fun PeopleSearchScreen(
 
     // 首次进页自动聚焦关键词框弹键盘，与通知页搜索栏行为一致。
     // 从详情页返回时 VM 还持有结果（非 Initial），不再弹键盘盖住结果列表。
+    // 有浏览历史时同理不弹——键盘会把"最近查看"列表盖掉，历史直达比重敲关键词更快。
     LaunchedEffect(Unit) {
-        if (state is PeopleSearchUiState.Initial) focusRequester.requestFocus()
+        if (state is PeopleSearchUiState.Initial && history.isEmpty()) focusRequester.requestFocus()
     }
 
     // 切换教工 / 学生时清掉上一种结果。首次 Composition 触发的初始调用是 no-op（state 已是 Initial）。
@@ -103,6 +109,12 @@ fun PeopleSearchScreen(
             keyboard?.hide()
             viewModel.search(type, keyword.trim(), field, mode)
         }
+    }
+
+    // 搜索结果与历史列表共用的详情入口：先记历史再导航，重复查看会把这个人上移到最前
+    val openPerson: (PersonResult) -> Unit = { result ->
+        viewModel.recordVisit(result)
+        onOpenPerson(result)
     }
 
     Scaffold(
@@ -133,15 +145,24 @@ fun PeopleSearchScreen(
             )
             Box(modifier = Modifier.weight(1f)) {
                 when (val s = state) {
-                    is PeopleSearchUiState.Initial -> EmptyState(
-                        message = stringResource(
-                            when (type) {
-                                PersonType.TEACHER -> R.string.people_search_initial_teacher
-                                PersonType.STUDENT -> R.string.people_search_initial_student
-                            }
-                        ),
-                        icon = Icons.Outlined.Search,
-                    )
+                    is PeopleSearchUiState.Initial -> if (history.isEmpty()) {
+                        EmptyState(
+                            message = stringResource(
+                                when (type) {
+                                    PersonType.TEACHER -> R.string.people_search_initial_teacher
+                                    PersonType.STUDENT -> R.string.people_search_initial_student
+                                }
+                            ),
+                            icon = Icons.Outlined.Search,
+                        )
+                    } else {
+                        HistoryList(
+                            history = history,
+                            onClickPerson = openPerson,
+                            onRemove = viewModel::removeHistory,
+                            onClearAll = viewModel::clearHistory,
+                        )
+                    }
                     is PeopleSearchUiState.Loading -> LoadingState()
                     is PeopleSearchUiState.Error -> ErrorState(
                         message = s.message,
@@ -162,7 +183,7 @@ fun PeopleSearchScreen(
                             results = s.results,
                             message = s.message,
                             count = s.count,
-                            onClickPerson = onOpenPerson,
+                            onClickPerson = openPerson,
                         )
                     }
                 }
@@ -326,8 +347,75 @@ private fun ResultList(
     }
 }
 
+/**
+ * 「最近查看」列表：Initial 态（还没搜索）下代替空态占位展示浏览历史。
+ * 教工 / 学生混排（不随顶部 chip 过滤——历史的意义是"回到之前那个人"，切 chip 不该把人藏起来），
+ * 卡片样式与搜索结果一致，多一个行尾 ✕ 删除单条；表头右侧「清空」删全部。
+ */
 @Composable
-private fun PersonCard(result: PersonResult, onClick: () -> Unit) {
+private fun HistoryList(
+    history: List<PersonResult>,
+    onClickPerson: (PersonResult) -> Unit,
+    onRemove: (PersonResult) -> Unit,
+    onClearAll: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.people_search_history_title),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onClearAll) {
+                    Text(stringResource(R.string.people_search_history_clear))
+                }
+            }
+        }
+        items(
+            items = history,
+            key = { "${it.type}:${it.userNum.ifEmpty { it.idText + it.name }}" },
+        ) { result ->
+            PersonCard(
+                result = result,
+                onClick = { onClickPerson(result) },
+                trailing = {
+                    IconButton(onClick = { onRemove(result) }) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = stringResource(R.string.people_search_history_remove),
+                            tint = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                },
+            )
+        }
+        item { Spacer(modifier = Modifier.height(8.dp)) }
+    }
+}
+
+@Composable
+private fun PersonCard(
+    result: PersonResult,
+    onClick: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -387,12 +475,16 @@ private fun PersonCard(result: PersonResult, onClick: () -> Unit) {
                     )
                 }
             }
-            Icon(
-                imageVector = Icons.Outlined.Badge,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.size(20.dp),
-            )
+            if (trailing != null) {
+                trailing()
+            } else {
+                Icon(
+                    imageVector = Icons.Outlined.Badge,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }

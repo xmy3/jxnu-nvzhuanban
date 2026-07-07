@@ -15,9 +15,14 @@ import cn.jxnu.nvzhuanban.data.network.pages.TeacherSearchPage
 import cn.jxnu.nvzhuanban.data.network.toUserMessage
 import cn.jxnu.nvzhuanban.data.repository.StudentRepository
 import cn.jxnu.nvzhuanban.data.repository.TeacherRepository
+import cn.jxnu.nvzhuanban.data.storage.PeopleSearchHistoryEntry
+import cn.jxnu.nvzhuanban.data.storage.PeopleSearchHistoryStore
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** 检索对象类型。教工与学生共用同一个搜索 UI、走不同后端。 */
@@ -92,6 +97,75 @@ class PeopleSearchViewModel(
 
     private val _state = MutableStateFlow<PeopleSearchUiState>(PeopleSearchUiState.Initial)
     val state: StateFlow<PeopleSearchUiState> = _state.asStateFlow()
+
+    /**
+     * 浏览历史（最近点开过详情的人），新→旧。存储在 [PeopleSearchHistoryStore]，
+     * 这里换成 UI 直接可用的 [PersonResult]，Screen 在 Initial 态渲染成"最近查看"列表，
+     * 点击复用与搜索结果完全相同的 onOpenPerson 路径。
+     */
+    val history: StateFlow<List<PersonResult>> = PeopleSearchHistoryStore.entries
+        .map { list -> list.map { it.toPersonResult() } }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            PeopleSearchHistoryStore.entries.value.map { it.toPersonResult() },
+        )
+
+    /** 用户点开某人详情时记录；同一人重复查看上移到最前。 */
+    fun recordVisit(result: PersonResult) {
+        PeopleSearchHistoryStore.record(
+            PeopleSearchHistoryEntry(
+                isTeacher = result.type == PersonType.TEACHER,
+                name = result.name,
+                gender = result.gender,
+                userNum = result.userNum,
+                department = result.department,
+                idText = result.idText,
+                className = (result as? PersonResult.StudentResult)?.className.orEmpty(),
+            ),
+        )
+    }
+
+    fun removeHistory(result: PersonResult) {
+        PeopleSearchHistoryStore.remove(
+            PeopleSearchHistoryEntry(
+                isTeacher = result.type == PersonType.TEACHER,
+                name = result.name,
+                gender = result.gender,
+                userNum = result.userNum,
+                department = result.department,
+                idText = result.idText,
+                className = (result as? PersonResult.StudentResult)?.className.orEmpty(),
+            ),
+        )
+    }
+
+    fun clearHistory() {
+        PeopleSearchHistoryStore.clearAll()
+    }
+
+    private fun PeopleSearchHistoryEntry.toPersonResult(): PersonResult = if (isTeacher) {
+        PersonResult.TeacherResult(
+            Teacher(
+                name = name,
+                teacherId = idText,
+                department = department,
+                gender = gender,
+                userNum = userNum,
+            ),
+        )
+    } else {
+        PersonResult.StudentResult(
+            Student(
+                name = name,
+                studentId = idText,
+                department = department,
+                className = className,
+                gender = gender,
+                userNum = userNum,
+            ),
+        )
+    }
 
     private data class LastInput(
         val type: PersonType,

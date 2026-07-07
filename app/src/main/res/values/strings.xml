@@ -21,6 +21,8 @@
     <string name="schedule_week_template">第 %1$d 周</string>
     <string name="schedule_today">今天</string>
     <string name="schedule_empty">这一周没有课，去玩吧 🎉</string>
+    <string name="schedule_palette_title">课表配色</string>
+    <string name="schedule_palette_action">切换课表配色</string>
 
     <!-- 成绩 -->
     <string name="grades_title">我的成绩</string>
@@ -71,6 +73,9 @@
     <string name="people_search_no_match_teacher">没有找到符合条件的教工</string>
     <string name="people_search_no_match_student">没有找到符合条件的学生</string>
     <string name="people_search_count_template">查询结果：%1$d 条记录</string>
+    <string name="people_search_history_title">最近查看</string>
+    <string name="people_search_history_clear">清空</string>
+    <string name="people_search_history_remove">删除这条历史</string>
 
     <!-- 教工详情页（被合并搜索结果的卡片点击进入） -->
     <string name="teacher_detail_title_fallback">教工信息</string>

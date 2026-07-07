@@ -13,6 +13,7 @@ import cn.jxnu.nvzhuanban.data.network.SecureCredentialStore
 import cn.jxnu.nvzhuanban.data.network.pages.UserDefaultPage
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
 import cn.jxnu.nvzhuanban.data.storage.CourseOverridesStore
+import cn.jxnu.nvzhuanban.data.storage.PeopleSearchHistoryStore
 import cn.jxnu.nvzhuanban.data.widget.WidgetSnapshotStore
 import cn.jxnu.nvzhuanban.ui.components.clearDecodedImageCache
 import cn.jxnu.nvzhuanban.ui.widget.TodayScheduleWidget
@@ -266,6 +267,7 @@ class AuthRepository private constructor(
     private suspend fun clearAllUserDataOnSignOut() {
         clearRepositoryCaches()
         CourseOverridesStore.clearAll()
+        PeopleSearchHistoryStore.clearAll()
         AnnouncementReadAnchor.clear()
         clearWidgetSnapshotOnSignOut()
         clearDecodedImageCache()

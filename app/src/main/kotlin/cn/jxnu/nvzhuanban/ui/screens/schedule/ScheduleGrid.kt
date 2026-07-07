@@ -52,7 +52,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.jxnu.nvzhuanban.data.model.Course
 import cn.jxnu.nvzhuanban.data.model.SectionTimetable
+import cn.jxnu.nvzhuanban.data.storage.SchedulePalette
 import cn.jxnu.nvzhuanban.data.storage.ScheduleHeightPrefs
+import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
 import kotlinx.coroutines.delay
 import java.time.LocalTime
 import kotlin.math.abs
@@ -100,6 +102,9 @@ internal fun ScheduleGrid(
     // 按 weekday 预分组：每次重组前 DayColumn 都要 7 次 filter（每天一次）。courses 改动频率远低于重组频率
     // （拖动 / hover / 高亮分钟级 tick 都会触发重组），用 remember 缓存能省掉绝大多数 O(N*7) 扫描。
     val coursesByDay = remember(courses) { courses.groupBy { it.weekday } }
+
+    // 用户选的课程卡配色方案；切换时整张网格重组一次换色（低频操作，不用下推到叶子）
+    val palette by ThemePrefs.schedulePalette.collectAsState()
 
     // 当前在本周时，每分钟轮询一次"下节/上课中"课程做高亮。
     // todayWeekday<=0 表示不是本周，此时不计算（state 始终 null，无开销）
@@ -187,6 +192,7 @@ internal fun ScheduleGrid(
                     courses = coursesByDay[day].orEmpty(),
                     isToday = day == todayWeekday,
                     highlight = if (day == todayWeekday) highlightState else null,
+                    palette = palette,
                     onCourseClick = onCourseClick,
                     sectionHeightDp = sectionHeightDp,
                     modifier = Modifier.weight(1f),
@@ -238,6 +244,7 @@ private fun DayColumn(
     courses: List<Course>,
     isToday: Boolean,
     highlight: HighlightedCourse?,
+    palette: SchedulePalette,
     onCourseClick: (Course) -> Unit,
     sectionHeightDp: () -> Float,
     modifier: Modifier = Modifier,
@@ -271,6 +278,7 @@ private fun DayColumn(
             CourseCard(
                 course = course,
                 highlightTag = highlight?.takeIf { it.courseId == course.id }?.tag,
+                palette = palette,
                 sectionHeightDp = sectionHeightDp,
                 onClick = { onCourseClick(course) },
             )
@@ -282,9 +290,11 @@ private fun DayColumn(
 private fun CourseCard(
     course: Course,
     highlightTag: String?,
+    palette: SchedulePalette,
     sectionHeightDp: () -> Float,
     onClick: () -> Unit,
 ) {
+    val cardColor = courseColor(course, palette)
     val locationMaxLines = when {
         course.sectionCount >= 3 -> 3
         course.sectionCount >= 2 -> 2
@@ -310,7 +320,7 @@ private fun CourseCard(
             .fillMaxWidth()
             .padding(2.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(courseColor(course))
+            .background(cardColor)
             .let { base ->
                 if (highlightTag != null) {
                     base.border(2.dp, Color.White, RoundedCornerShape(10.dp))
@@ -331,7 +341,7 @@ private fun CourseCard(
                     text = highlightTag,
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                     fontWeight = FontWeight.Bold,
-                    color = courseColor(course),
+                    color = cardColor,
                     maxLines = 1,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
@@ -373,29 +383,6 @@ private fun CourseCard(
             }
         }
     }
-}
-
-// Material 700/800 档深色底：保证卡内白色文字（含 9sp 小字）对比度 ≥ 4.5:1（WCAG AA）
-private val COURSE_PALETTE = listOf(
-    Color(0xFFD32F2F), // Red 700
-    Color(0xFF7B1FA2), // Purple 700
-    Color(0xFF303F9F), // Indigo 700
-    Color(0xFF0277BD), // Light Blue 800
-    Color(0xFF00796B), // Teal 700
-    Color(0xFF2E7D32), // Green 800
-    Color(0xFFBF360C), // Deep Orange 900
-    Color(0xFF6D4C41), // Brown 600
-    Color(0xFF546E7A), // Blue Grey 600
-    Color(0xFFC2185B), // Pink 700
-    Color(0xFF5E35B1), // Deep Purple 600
-    Color(0xFF1976D2), // Blue 700
-)
-
-// 通过课程名称的稳定 hash 派生颜色，让同名课程颜色一致
-internal fun courseColor(course: Course): Color {
-    // 用 and Int.MAX_VALUE 取非负：避免 hashCode == Int.MIN_VALUE 时 `-it` 仍为负 → % 出负 index → 越界
-    val idx = (course.name.hashCode() and Int.MAX_VALUE) % COURSE_PALETTE.size
-    return COURSE_PALETTE[idx]
 }
 
 /**

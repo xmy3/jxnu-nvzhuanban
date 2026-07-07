@@ -9,6 +9,7 @@ import cn.jxnu.nvzhuanban.data.repository.UpdateRepository
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
 import cn.jxnu.nvzhuanban.data.storage.AvatarPrefs
 import cn.jxnu.nvzhuanban.data.storage.CourseOverridesStore
+import cn.jxnu.nvzhuanban.data.storage.PeopleSearchHistoryStore
 import cn.jxnu.nvzhuanban.data.storage.ScheduleHeightPrefs
 import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
 import cn.jxnu.nvzhuanban.data.storage.UpdatePrefs
@@ -47,6 +48,7 @@ class NvzhuanbanApp : Application() {
         AvatarPrefs.init(this)
         ScheduleHeightPrefs.init(this)
         CourseOverridesStore.init(this)
+        PeopleSearchHistoryStore.init(this)
         AnnouncementReadAnchor.init(this)
         UpdatePrefs.init(this)
         val auth = AuthRepository.init(this)
@@ -108,6 +110,7 @@ class NvzhuanbanApp : Application() {
             "avatar_prefs",            // AvatarPrefs
             "schedule_height_prefs",   // ScheduleHeightPrefs
             "course_overrides",        // CourseOverridesStore
+            "people_search_history",   // PeopleSearchHistoryStore
             "announcement_read_prefs", // AnnouncementReadAnchor
             "update_prefs",            // UpdatePrefs
             "jxnu_auth",               // AuthStorage（AuthRepository.init 内首读）
