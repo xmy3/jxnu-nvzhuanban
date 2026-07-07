@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,7 +26,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.Lock
@@ -73,6 +73,7 @@ import cn.jxnu.nvzhuanban.data.model.ArticleBlock
 import cn.jxnu.nvzhuanban.data.model.ArticleDetail
 import cn.jxnu.nvzhuanban.data.model.InlineRun
 import cn.jxnu.nvzhuanban.data.model.InlineStyle
+import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.FullScreenImageViewer
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
@@ -105,14 +106,7 @@ fun AnnouncementDetailScreen(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.announcement_detail_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.cd_back),
-                        )
-                    }
-                },
+                navigationIcon = { BackNavigationIcon(onBack) },
                 actions = {
                     if (externalUrl != null) {
                         IconButton(onClick = { openExternalHttpUrl(context, externalUrl) }) {
@@ -265,7 +259,9 @@ private fun ArticleBody(
                 }
             }
 
-            items(detail.blocks) { block ->
+            // contentType 让 LazyColumn 只在同类 block（段落/图片/表格…）之间复用节点，
+            // 避免滚出屏的 Table 被拿去承载 Paragraph 这类近似整棵重建的错配
+            items(detail.blocks, contentType = { it::class }) { block ->
                 Spacer(modifier = Modifier.height(8.dp))
                 BlockView(block, onImageClick = onImageClick)
             }
@@ -318,22 +314,30 @@ private fun ImageBlockView(
     onImageClick: (String) -> Unit,
 ) {
     // Surface 只约束宽度铺满，高度交给内部 RemoteJwcImage 按图片真实宽高比自适应。
-    // heightIn(min = 160.dp) 作用在 RemoteJwcImage 上，给 loading 期间撑出一个占位高度；
-    // 图片加载完成后 ContentScale.FillWidth 让 Image 用 intrinsic ratio 自己撑开高度，
-    // 不再被任何固定上限裁掉（jwc 通知里偶尔出现的长图截屏可以完整展示）。
+    // <img> 带像素 width/height（Word 粘贴产物通常带）时用 aspectRatio 给 loading 占位精确预留高度，
+    // 属性可信时加载完成高度零跳变，阅读位置不会被撑开的图片推移；无宽高信息时退回
+    // heightIn(min = 160.dp)。预占位只作用于占位分支：加载成功后 ContentScale.FillWidth 让
+    // Image 用 intrinsic ratio 自己撑开高度，属性与真实位图不符（手改 HTML / CMS 二次缩放）
+    // 也不会把图裁掉一截（jwc 通知里偶尔出现的长图截屏可以完整展示）。
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onImageClick(image.src) },
+            .clickable(onClickLabel = "查看大图") { onImageClick(image.src) },
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
+        val ratio = image.aspectRatio
         RemoteJwcImage(
             url = image.src,
-            contentDescription = image.alt,
-            modifier = Modifier
+            // jwc 的 img 几乎从不写 alt；给个中文兜底，TalkBack 不至于聚焦到无名称的可点目标
+            contentDescription = image.alt ?: "通知配图",
+            modifier = Modifier.fillMaxWidth(),
+            placeholderModifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 160.dp),
+                .then(
+                    if (ratio != null) Modifier.aspectRatio(ratio)
+                    else Modifier.heightIn(min = 160.dp),
+                ),
             contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
             fallback = {
                 Icon(

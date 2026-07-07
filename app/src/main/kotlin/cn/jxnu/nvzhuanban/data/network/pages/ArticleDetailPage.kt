@@ -151,6 +151,8 @@ object ArticleDetailPage {
                         blocks += ArticleBlock.Image(
                             src = src,
                             alt = el.attr("alt").takeIf { it.isNotBlank() },
+                            widthPx = parseImgDimension(el.attr("width")),
+                            heightPx = parseImgDimension(el.attr("height")),
                         )
                     }
                 }
@@ -334,6 +336,13 @@ object ArticleDetailPage {
             val tail = path.substringAfterLast('/', missingDelimiterValue = path)
             return tail.ifBlank { href }
         }
+
+        /**
+         * `<img width="554">` / `width="554px"` → 554；百分比（`100%`）、`auto` 等
+         * 非像素值返回 null，UI 层退回最小高度占位而不是错误的宽高比。
+         */
+        private fun parseImgDimension(value: String): Int? =
+            value.trim().removeSuffix("px").trim().toIntOrNull()?.takeIf { it > 0 }
 
         private fun parseHtmlColor(value: String): Int? {
             val v = value.trim().lowercase()

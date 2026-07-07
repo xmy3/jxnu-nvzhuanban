@@ -37,8 +37,22 @@ sealed interface ArticleBlock {
      * [src] 在 Jsoup 解析阶段已被 baseUri 解析为绝对 URL，渲染走
      * [cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage]（自动带 session cookie，
      * 兼容站内 /MyControl/ 路径的鉴权图片）。
+     *
+     * [widthPx] / [heightPx] 来自 `<img>` 的 width/height 像素属性（Word 粘贴产物通常带着）。
+     * 只用于 UI 在图片加载完成前按 [aspectRatio] 精确预占位；百分比 / auto 等非像素值为 null。
      */
-    data class Image(val src: String, val alt: String?) : ArticleBlock
+    data class Image(
+        val src: String,
+        val alt: String?,
+        val widthPx: Int? = null,
+        val heightPx: Int? = null,
+    ) : ArticleBlock {
+        /** 宽高比（w/h），任一维缺失或非正时为 null——UI 退回最小高度占位。 */
+        val aspectRatio: Float?
+            get() = if (widthPx != null && widthPx > 0 && heightPx != null && heightPx > 0) {
+                widthPx.toFloat() / heightPx
+            } else null
+    }
 
     /** rows[行][列] = 单元格内的内联富文本。jwc 通知偶尔嵌入小型课表/时间表。 */
     data class Table(val rows: List<List<List<InlineRun>>>) : ArticleBlock

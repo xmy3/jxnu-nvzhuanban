@@ -23,7 +23,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
@@ -49,8 +48,10 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,12 +67,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.jxnu.nvzhuanban.R
 import cn.jxnu.nvzhuanban.data.model.Announcement
 import cn.jxnu.nvzhuanban.data.model.AnnouncementType
+import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.flow.drop
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -142,7 +145,10 @@ fun AnnouncementScreen(
                     state = state.data,
                     onRetry = viewModel::load,
                 ) {
-                    val list = state.visibleList
+                    // remember：同输入返回同实例。visibleList 是计算属性，过滤态下每次读取都
+                    // 重新 filter 并分配新 List，isRefreshing/isLoadingMore 翻转这类无关重组
+                    // 会让 AnnouncementList 的 list 参数引用不等价、破坏 skip。
+                    val list = remember(state.data, state.filter, state.searchQuery) { state.visibleList }
                     if (list.isEmpty()) {
                         when {
                             // 搜索没找到：单独一屏，包含「加载更早的通知继续搜索」按钮（hasMore 时），
@@ -209,14 +215,7 @@ private fun SearchTopBar(
                 )
             }
         },
-        navigationIcon = {
-            IconButton(onClick = onClose) {
-                Icon(
-                    Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = stringResource(R.string.cd_back),
-                )
-            }
-        },
+        navigationIcon = { BackNavigationIcon(onClose) },
         actions = {
             if (query.isNotEmpty()) {
                 IconButton(onClick = { onQueryChange("") }) {
@@ -319,19 +318,28 @@ private fun AnnouncementList(
 
     // 切换过滤器 / 进出搜索态时把滚动位置归零，否则 lastVisible 还停在上一次的 index：
     // 切到一个只有少量条目的分类会立刻触发 derivedStateOf → loadMore，发起多余请求。
-    LaunchedEffect(filterKey, isSearching) {
-        listState.scrollToItem(0)
+    // snapshotFlow + drop(1)：只在值真正变化时归零。若直接 LaunchedEffect(filterKey, isSearching)，
+    // 从详情页返回 / 底部导航切回时 effect 重新进组合会重跑，把刚恢复的滚动位置冲回顶部。
+    val currentFilter by rememberUpdatedState(filterKey)
+    val currentSearching by rememberUpdatedState(isSearching)
+    LaunchedEffect(listState) {
+        snapshotFlow { currentFilter to currentSearching }
+            .drop(1)
+            .collect { listState.scrollToItem(0) }
     }
 
     // 滚到距底部 3 项时自动 loadMore。derivedStateOf 把派生计算挂在 listState 上，
-    // 只在 lastVisibleIndex / list.size 变化时才重算，避免每帧重组。
+    // 只在 layoutInfo 变化时才重算，避免每帧重组。只读 listState.layoutInfo（快照状态），
+    // 不捕获 list 参数——无 key 的 remember 会把 list 引用冻结在首次组合，
+    // loadMore 追加 / 切换过滤器后阈值就永远停在旧的 size 上。
     // 搜索态下禁用：搜词冷门时 visibleList 可能很短，自动触发会把所有页都抓回来，
     // 太激进。改用底部「加载更早的通知继续搜索」按钮显式 opt-in。
     val shouldLoadMore by remember {
         derivedStateOf {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@derivedStateOf false
-            // list.size 是 list（过滤后）大小；底部 footer 也算一个 item，留 3 项裕度
-            lastVisible >= list.size - 3
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: return@derivedStateOf false
+            // totalItemsCount 含底部 footer（占 1 项），-4 等效于距数据末尾留 3 项裕度
+            lastVisible >= info.totalItemsCount - 4
         }
     }
     LaunchedEffect(shouldLoadMore, hasMore, isLoadingMore, isSearching) {

@@ -1,5 +1,6 @@
 package cn.jxnu.nvzhuanban.ui.screens.userschedule
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -16,25 +17,24 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,6 +44,7 @@ import cn.jxnu.nvzhuanban.R
 import cn.jxnu.nvzhuanban.data.model.Course
 import cn.jxnu.nvzhuanban.data.model.SectionTimetable
 import cn.jxnu.nvzhuanban.data.network.pages.SchedulePage
+import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 
@@ -57,10 +58,18 @@ fun UserScheduleScreen(
     onBack: () -> Unit,
     viewModel: UserScheduleViewModel = viewModel(
         key = scheduleUrl,
-        factory = UserScheduleViewModel.factory(scheduleUrl, name),
+        factory = UserScheduleViewModel.factory(scheduleUrl),
     ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val isSwitching by viewModel.isSwitching.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    // 切学期失败保留旧课表，只用 Toast 一次性提示（跟 LoginScreen 的告警同款）
+    LaunchedEffect(Unit) {
+        viewModel.switchError.collect { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -70,14 +79,7 @@ fun UserScheduleScreen(
                         else stringResource(R.string.user_schedule_title_template, name)
                     )
                 },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.cd_back),
-                        )
-                    }
-                },
+                navigationIcon = { BackNavigationIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
             )
         },
@@ -89,6 +91,7 @@ fun UserScheduleScreen(
         ) { parsed ->
             ScheduleBody(
                 parsed = parsed,
+                isSwitching = isSwitching,
                 onSelectSemester = viewModel::selectSemester,
             )
         }
@@ -99,6 +102,7 @@ fun UserScheduleScreen(
 @Composable
 private fun ScheduleBody(
     parsed: SchedulePage.Parsed,
+    isSwitching: Boolean,
     onSelectSemester: (String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -115,7 +119,7 @@ private fun ScheduleBody(
                     val selected = sem.label == parsed.semester
                     FilterChip(
                         selected = selected,
-                        onClick = { if (!selected) onSelectSemester(sem.value) },
+                        onClick = { if (!selected && !isSwitching) onSelectSemester(sem.value) },
                         label = { Text(sem.label) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary,
@@ -123,6 +127,10 @@ private fun ScheduleBody(
                         ),
                     )
                 }
+            }
+            // 切学期是真实的 ASP.NET POST（秒级），chip 行下给个细进度条反馈
+            if (isSwitching) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
         }
 

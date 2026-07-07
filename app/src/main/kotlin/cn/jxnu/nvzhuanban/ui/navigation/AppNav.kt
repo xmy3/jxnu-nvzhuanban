@@ -30,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -387,7 +389,11 @@ private fun BottomNav(
                         )
                     }
                     if (showDot) {
-                        BadgedBox(badge = { Badge() }) { icon() }
+                        // 红点纯视觉，TalkBack 靠这条 contentDescription 得知有未读；无红点时不加
+                        BadgedBox(
+                            badge = { Badge() },
+                            modifier = Modifier.semantics { contentDescription = "有未读通知" },
+                        ) { icon() }
                     } else {
                         icon()
                     }

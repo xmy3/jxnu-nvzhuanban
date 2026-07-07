@@ -2,6 +2,9 @@ package cn.jxnu.nvzhuanban.data.network
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.Cache
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -11,6 +14,7 @@ import java.util.concurrent.TimeUnit
  * 全局 OkHttp 单例，启动时由 [cn.jxnu.nvzhuanban.NvzhuanbanApp] 调用 [init]。
  *
  * - 持久化 Cookie 通过 [PersistentCookieJar]
+ * - 20MB 磁盘 HTTP 缓存（cacheDir/http），静态图片按 Last-Modified/ETag 协商命中
  * - 自动跟随重定向（CAS 登录后会跳 4-5 次跨域）
  * - 默认 UA 伪装成 Chrome，避免被某些反爬规则误伤
  * - 默认超时 15s/30s，长查询页可单独调整
@@ -20,6 +24,16 @@ class JxnuHttpClient private constructor(
     val cookieJar: PersistentCookieJar,
     val client: OkHttpClient,
 ) {
+    /**
+     * 清空磁盘 HTTP 缓存。退出登录时调用 —— 上一用户的头像 / 师生照片响应是明文落盘的，
+     * 不能跨账号残留。evictAll 是磁盘操作，切到 IO 线程执行。
+     */
+    suspend fun clearHttpCache() {
+        withContext(Dispatchers.IO) {
+            runCatching { client.cache?.evictAll() }
+        }
+    }
+
     companion object {
         // 江西师大教务系统 PC 端真实抓包用的 UA，移动端用 Chrome Mobile 也能登录，但保持一致风险更低
         private const val DEFAULT_UA =
@@ -84,6 +98,9 @@ class JxnuHttpClient private constructor(
 
             val builder = OkHttpClient.Builder()
                 .cookieJar(cookieJar)
+                // 磁盘缓存只对带可缓存头的响应生效——jwc 的静态图片带 Last-Modified/ETag 能协商命中，
+                // CAS/教务动态页不带缓存头（且多为带查询串的 GET / POST）不会被缓存，登录链路不受影响
+                .cache(Cache(appContext.cacheDir.resolve("http"), 20L * 1024 * 1024))
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .connectTimeout(15, TimeUnit.SECONDS)

@@ -1,6 +1,7 @@
 package cn.jxnu.nvzhuanban.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -12,9 +13,11 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,6 +42,7 @@ import cn.jxnu.nvzhuanban.R
  *  - 双击：< 1.5× → 跳到 2.5×；≥ 1.5× → 回到 1×
  *  - 单击：> 1× 时回到 1×；= 1× 时关闭
  *  - 返回键 / 右上 × → 关闭
+ *  - 加载失败显示「加载失败，点按重试」，点按重新触发下载
  *
  * 黑底全屏 Dialog。底层图片走 [RemoteJwcImage]（带 session cookie，与正文同一加载路径），
  * `ContentScale.Fit` 保证整图可见，再叠 [graphicsLayer] 做缩放/平移变换。
@@ -66,6 +70,8 @@ fun FullScreenImageViewer(
     ) {
         var scale by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }
+        // 递增触发 RemoteJwcImage 重新下载（加载失败后的「点按重试」）
+        var retry by remember(url) { mutableIntStateOf(0) }
 
         Box(
             modifier = Modifier
@@ -89,7 +95,18 @@ fun FullScreenImageViewer(
                             val newScale = (scale * zoom).coerceIn(MIN_SCALE, MAX_SCALE)
                             scale = newScale
                             // 缩放回到 1× 时把 offset 清零，避免下次进入 viewer 残留偏移视觉
-                            offset = if (newScale > 1.01f) offset + pan else Offset.Zero
+                            offset = if (newScale > 1.01f) {
+                                // 中心缩放下可平移边界 = size*(scale-1)/2；用新 scale 计算，
+                                // 捏合缩小时旧 offset 一并被 re-clamp 回收，图片不会被拖出屏幕
+                                val maxX = size.width * (newScale - 1f) / 2f
+                                val maxY = size.height * (newScale - 1f) / 2f
+                                Offset(
+                                    (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                    (offset.y + pan.y).coerceIn(-maxY, maxY),
+                                )
+                            } else {
+                                Offset.Zero
+                            }
                         }
                     }
                     .pointerInput(Unit) {
@@ -113,8 +130,18 @@ fun FullScreenImageViewer(
                         )
                     },
                 contentScale = ContentScale.Fit,
+                retryKey = retry,
                 fallback = {
                     CircularProgressIndicator(color = Color.White)
+                },
+                error = {
+                    Text(
+                        text = "加载失败，点按重试",
+                        color = Color.White,
+                        modifier = Modifier
+                            .clickable { retry++ }
+                            .padding(16.dp),
+                    )
                 },
             )
 

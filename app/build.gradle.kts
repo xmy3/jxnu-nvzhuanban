@@ -117,6 +117,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
+    // 把 src/main/baseline-prof.txt 编进 APK 的 profile 在首启后台安装
+    // （GitHub 直发 APK，没有 Play 云端 profile 分发可依赖）
+    implementation(libs.androidx.profileinstaller)
 
     // Compose
     implementation(platform(libs.androidx.compose.bom))

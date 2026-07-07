@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Badge
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
@@ -30,7 +29,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -56,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.jxnu.nvzhuanban.R
+import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.ErrorState
 import cn.jxnu.nvzhuanban.ui.components.LoadingState
@@ -88,6 +87,12 @@ fun PeopleSearchScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
 
+    // 首次进页自动聚焦关键词框弹键盘，与通知页搜索栏行为一致。
+    // 从详情页返回时 VM 还持有结果（非 Initial），不再弹键盘盖住结果列表。
+    LaunchedEffect(Unit) {
+        if (state is PeopleSearchUiState.Initial) focusRequester.requestFocus()
+    }
+
     // 切换教工 / 学生时清掉上一种结果。首次 Composition 触发的初始调用是 no-op（state 已是 Initial）。
     LaunchedEffect(type) {
         viewModel.clearResults()
@@ -104,14 +109,7 @@ fun PeopleSearchScreen(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.people_search_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.cd_back),
-                        )
-                    }
-                },
+                navigationIcon = { BackNavigationIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
             )
         },

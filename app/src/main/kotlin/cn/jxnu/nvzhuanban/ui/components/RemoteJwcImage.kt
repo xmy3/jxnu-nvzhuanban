@@ -1,9 +1,9 @@
-﻿package cn.jxnu.nvzhuanban.ui.components
+package cn.jxnu.nvzhuanban.ui.components
 
 import android.graphics.BitmapFactory
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -16,6 +16,26 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import cn.jxnu.nvzhuanban.data.network.JwcClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * 进程级解码结果缓存，按位图字节数计权（ARGB_8888 ≈ w*h*4），容量约 20MB。
+ * LazyColumn 回收后滚回、全屏查看器复用正文图、配置变更重建，命中同一 url 时零网络零解码。
+ */
+private val decodedImageCache = object : LruCache<String, ImageBitmap>(20 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: ImageBitmap): Int = value.width * value.height * 4
+}
+
+/** 退出登录时清空，避免上一用户的头像 / 检索照片以解码位图形式跨账号残留。 */
+internal fun clearDecodedImageCache() = decodedImageCache.evictAll()
+
+/** 加载中 / 成功 / 失败三态，Failed 与 Loading 区分开才能给调用方提供重试入口。 */
+private sealed interface ImageLoadState {
+    data object Loading : ImageLoadState
+    data class Success(val bitmap: ImageBitmap) : ImageLoadState
+    data object Failed : ImageLoadState
+}
 
 /**
  * 用应用全局 [cn.jxnu.nvzhuanban.data.network.JxnuHttpClient] 拉一张教务网图片解码成 [ImageBitmap]。
@@ -30,11 +50,15 @@ import cn.jxnu.nvzhuanban.data.network.JwcClient
  * **加载后的布局策略由调用方控制**：
  * - 头像 / 缩略图：传固定尺寸 [modifier]（如 `Modifier.size(80.dp)`）+ 默认 [ContentScale.Crop]，
  *   图片裁切居中铺满。
- * - 通知正文长图：传 `Modifier.fillMaxWidth().heightIn(min = …)` + [ContentScale.FillWidth]，
- *   宽度铺满 + 高度按图片真实宽高比自适应（避免长图被截断）。`heightIn(min = …)` 是给 loading
- *   期间的 fallback 用的——加载成功后 Image 按 intrinsic ratio 自己撑开。
+ * - 通知正文长图：传 `Modifier.fillMaxWidth()` + [ContentScale.FillWidth]，加载成功后 Image
+ *   按 intrinsic ratio 自己撑开；loading / 失败占位的尺寸走 [placeholderModifier]
+ *   （如 `Modifier.fillMaxWidth().aspectRatio(…)` 精确预占位）。预占位只作用于占位分支：
+ *   HTML 宽高属性与真实位图不符时，代价只是位图落地那一刻的一次高度调整，
+ *   而不是把加载完的图裁掉一截。
  *
- * 加载中 / 失败时显示 [fallback]。[url] 变化或被置为 null 会清空当前图。
+ * 加载中显示 [fallback]；失败显示 [error]（未提供时回退 [fallback]，与旧行为一致）。
+ * 需要「点按重试」时把一个计数状态传给 [retryKey]，递增即重触发下载。
+ * [url] 变化或被置为 null 会清空当前图。
  */
 @Composable
 fun RemoteJwcImage(
@@ -42,35 +66,56 @@ fun RemoteJwcImage(
     contentDescription: String?,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    retryKey: Any? = null,
+    // loading / 失败占位分支专用；null 时沿用 modifier（固定尺寸调用方两态同框）
+    placeholderModifier: Modifier? = null,
+    error: (@Composable () -> Unit)? = null,
     fallback: @Composable () -> Unit,
 ) {
-    var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(url) {
-        if (url.isNullOrBlank()) return@LaunchedEffect
-        val bmp = runCatching {
-            // getBytesAuth：session 失效时自动 reauth + 重放一次，避免头像加载失败把用户踢出
-            val bytes = JwcClient.getBytesAuth(url, "图片返回空响应")
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                ?: error("decode 失败")
-        }.getOrNull()
-        bitmap = bmp?.asImageBitmap()
-    }
-    val bmp = bitmap
-    if (bmp != null) {
-        // 直接把 modifier 作用在 Image 上：固定尺寸调用方拿到固定框，
-        // fillMaxWidth 调用方拿到「宽度铺满 + 高度按 intrinsic ratio」自适应行为。
-        Image(
-            bitmap = bmp,
-            contentDescription = contentDescription,
-            modifier = modifier,
-            contentScale = contentScale,
+    var state by remember(url) {
+        val cached = url?.let { decodedImageCache.get(it) }
+        mutableStateOf<ImageLoadState>(
+            if (cached != null) ImageLoadState.Success(cached) else ImageLoadState.Loading
         )
-    } else {
-        // loading / 失败：用 Box wrap fallback 居中。modifier 决定占位框大小
-        // （调用方应提供 min 高度，否则 fillMaxWidth 时 Box 会塌缩为 0 高）。
-        Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            fallback()
+    }
+    LaunchedEffect(url, retryKey) {
+        if (url.isNullOrBlank() || state is ImageLoadState.Success) return@LaunchedEffect
+        state = ImageLoadState.Loading
+        // fetch + decode 一起留在 IO 线程：通知里的长图截屏在主线程解码会卡帧
+        val bmp = withContext(Dispatchers.IO) {
+            runCatching {
+                // getBytesAuth：session 失效时自动 reauth + 重放一次，避免头像加载失败把用户踢出
+                JwcClient.getBytesAuth(url, "图片返回空响应")
+            }.getOrNull()
+                ?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                ?.asImageBitmap()
+        }
+        state = if (bmp != null) {
+            decodedImageCache.put(url, bmp)
+            ImageLoadState.Success(bmp)
+        } else {
+            ImageLoadState.Failed
         }
     }
+    when (val s = state) {
+        is ImageLoadState.Success ->
+            // 直接把 modifier 作用在 Image 上：固定尺寸调用方拿到固定框，
+            // fillMaxWidth 调用方拿到「宽度铺满 + 高度按 intrinsic ratio」自适应行为。
+            Image(
+                bitmap = s.bitmap,
+                contentDescription = contentDescription,
+                modifier = modifier,
+                contentScale = contentScale,
+            )
+        // loading / 失败：用 Box wrap 占位内容居中。placeholderModifier（缺省 modifier）决定占位框
+        // 大小（调用方应提供 min 高度或宽高比，否则 fillMaxWidth 时 Box 会塌缩为 0 高）。
+        ImageLoadState.Failed ->
+            Box(modifier = placeholderModifier ?: modifier, contentAlignment = Alignment.Center) {
+                (error ?: fallback)()
+            }
+        ImageLoadState.Loading ->
+            Box(modifier = placeholderModifier ?: modifier, contentAlignment = Alignment.Center) {
+                fallback()
+            }
+    }
 }
-

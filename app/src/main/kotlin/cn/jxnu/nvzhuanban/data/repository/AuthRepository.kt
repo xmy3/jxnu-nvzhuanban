@@ -14,6 +14,7 @@ import cn.jxnu.nvzhuanban.data.network.pages.UserDefaultPage
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
 import cn.jxnu.nvzhuanban.data.storage.CourseOverridesStore
 import cn.jxnu.nvzhuanban.data.widget.WidgetSnapshotStore
+import cn.jxnu.nvzhuanban.ui.components.clearDecodedImageCache
 import cn.jxnu.nvzhuanban.ui.widget.TodayScheduleWidget
 import cn.jxnu.nvzhuanban.ui.widget.WidgetUpdateScheduler
 import kotlinx.coroutines.Dispatchers
@@ -258,6 +259,7 @@ class AuthRepository private constructor(
      *  - 课程周次本地覆盖（CourseOverridesStore）
      *  - 通知已读锚点（AnnouncementReadAnchor）—— 否则下一用户继承上一用户的"最后已读"
      *  - 桌面 widget snapshot 文件 —— 否则锁屏小部件还在显示上一用户的今日课表
+     *  - 图片缓存（内存解码位图 + OkHttp 磁盘缓存）—— 否则上一用户的头像 / 师生照片跨账号残留
      *
      * 注意：调用方已持有 [authMutex]，这里串行执行即可，不会和并发的 login 抢锁。
      */
@@ -266,6 +268,8 @@ class AuthRepository private constructor(
         CourseOverridesStore.clearAll()
         AnnouncementReadAnchor.clear()
         clearWidgetSnapshotOnSignOut()
+        clearDecodedImageCache()
+        JxnuHttpClient.get().clearHttpCache()
     }
 
     /** 仅清各 Repository 单例的内存缓存 —— 会话过期时用（数据可在重登后重新拉取）。 */

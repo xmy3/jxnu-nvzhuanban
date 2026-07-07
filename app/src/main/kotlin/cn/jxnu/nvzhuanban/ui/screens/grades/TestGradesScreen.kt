@@ -29,7 +29,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -86,8 +85,8 @@ private fun TestGradesList(report: TestGradeReport) {
     ) {
         item { ReportHeader(report) }
         report.groups.forEach { group ->
-            item(key = "group_${group.title}") { GroupHeader(group) }
-            items(group.grades, key = { "${group.title}_${it.id}" }) { g -> TestGradeRow(g) }
+            item(key = "group_${group.title}", contentType = "groupHeader") { GroupHeader(group) }
+            items(group.grades, key = { "${group.title}_${it.id}" }, contentType = { "testGrade" }) { g -> TestGradeRow(g) }
         }
         item { Spacer(modifier = Modifier.height(8.dp)) }
     }
@@ -231,7 +230,7 @@ private fun ScoreBadge(label: String, value: String, emphasize: Boolean) {
     val labelColor = if (emphasize) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
     else MaterialTheme.colorScheme.onSurfaceVariant
     val valueColor = if (emphasize) MaterialTheme.colorScheme.onPrimary
-    else scoreColor(value)
+    else scoreColor(value, zeroMeansUnfilled = true)
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(14.dp))
@@ -267,25 +266,12 @@ private fun ScoreCell(label: String, value: String, modifier: Modifier = Modifie
             text = value,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
-            color = scoreColor(value),
+            color = scoreColor(value, zeroMeansUnfilled = true),
         )
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    }
-}
-
-@Composable
-private fun scoreColor(score: String): Color {
-    val num = score.toFloatOrNull()
-    return when {
-        num == null -> MaterialTheme.colorScheme.tertiary
-        num == 0f -> MaterialTheme.colorScheme.onSurfaceVariant  // 教师常用 0 表示"未填"，不当作不及格
-        num >= 90 -> MaterialTheme.colorScheme.primary
-        num >= 80 -> MaterialTheme.colorScheme.tertiary
-        num >= 60 -> MaterialTheme.colorScheme.secondary
-        else -> MaterialTheme.colorScheme.error
     }
 }

@@ -72,6 +72,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _isLoggingOut = MutableStateFlow(false)
     val isLoggingOut: StateFlow<Boolean> = _isLoggingOut.asStateFlow()
 
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
     init { load() }
 
     fun load() {
@@ -101,33 +104,72 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * TopAppBar 手动刷新：重取首页姓名 + 强制重取成绩页学院/学分。区别于 [load] 的自愈路径，
+     * 这里不看 needsGradeEnrichment 门控（成功过也允许刷），成绩页走 [GradeRepository.refresh]
+     * bypass 内存缓存，保证学期初学分变动能拉到新值。
+     */
+    fun refresh() {
+        if (_isRefreshing.value) return
+        if (_state.value !is UiState.Success) {
+            load()
+            return
+        }
+        _isRefreshing.value = true
+        viewModelScope.launch {
+            try {
+                // 首页只提供姓名/学号，学院/学分等 enrich 字段保留旧值，随后由强制 enrich 覆盖，
+                // 避免刷新瞬间已展示的学院信息退回"加载中"占位。
+                authRepo.refreshProfile()?.let { refreshed ->
+                    updateUser { current ->
+                        refreshed.copy(
+                            college = current.college,
+                            major = current.major,
+                            className = current.className,
+                            cumulativeCredits = current.cumulativeCredits,
+                            graduationMinimumCredits = current.graduationMinimumCredits,
+                        )
+                    }
+                }
+                enrichNow(force = true)
+            } finally {
+                _isRefreshing.value = false
+            }
+        }
+    }
+
+    /**
      * 从成绩页拉学院/专业/班级/已修学分补全 profile。无参——读当前 [_state] 里的 user 作基底，
      * 所以 [retryEnrich] 能直接复用。失败不再静默吞掉，而是落 [EnrichStatus.Failed] 让 UI 给重试入口。
      */
     private fun enrichFromGrades() {
+        viewModelScope.launch { enrichNow(force = false) }
+    }
+
+    /** [force] = true 时经 [GradeRepository.refresh] 绕过缓存重连成绩页。 */
+    private suspend fun enrichNow(force: Boolean) {
         setEnrichStatus(EnrichStatus.Loading)
-        viewModelScope.launch {
-            val meta: GradePage.StudentMeta? = runCatching { gradeRepo.fetchAll().meta }.getOrNull()
-            if (meta == null) {
-                setEnrichStatus(EnrichStatus.Failed)
-                return@launch
-            }
-            updateUser { current ->
-                current.copy(
-                    college = meta.college?.takeIf { it.isNotBlank() } ?: current.college,
-                    major = meta.major?.takeIf { it.isNotBlank() } ?: current.major,
-                    className = meta.className?.takeIf { it.isNotBlank() } ?: current.className,
-                    // 姓名仍是占位时用成绩页 meta 的姓名回填——修复旧 `ifBlank` 对"同学"判 false
-                    // 导致真实姓名无法覆盖占位的坑。已自愈（非占位）则不动。
-                    name = if (current.hasPlaceholderName) {
-                        meta.name?.takeIf { it.isNotBlank() } ?: current.name
-                    } else current.name,
-                    studentId = current.studentId.ifBlank { meta.studentId.orEmpty().ifBlank { current.studentId } },
-                    cumulativeCredits = meta.totalCredit ?: current.cumulativeCredits,
-                )
-            }
-            setEnrichStatus(EnrichStatus.Idle)
+        val meta: GradePage.StudentMeta? = runCatching {
+            (if (force) gradeRepo.refresh() else gradeRepo.fetchAll()).meta
+        }.getOrNull()
+        if (meta == null) {
+            setEnrichStatus(EnrichStatus.Failed)
+            return
         }
+        updateUser { current ->
+            current.copy(
+                college = meta.college?.takeIf { it.isNotBlank() } ?: current.college,
+                major = meta.major?.takeIf { it.isNotBlank() } ?: current.major,
+                className = meta.className?.takeIf { it.isNotBlank() } ?: current.className,
+                // 姓名仍是占位时用成绩页 meta 的姓名回填——修复旧 `ifBlank` 对"同学"判 false
+                // 导致真实姓名无法覆盖占位的坑。已自愈（非占位）则不动。
+                name = if (current.hasPlaceholderName) {
+                    meta.name?.takeIf { it.isNotBlank() } ?: current.name
+                } else current.name,
+                studentId = current.studentId.ifBlank { meta.studentId.orEmpty().ifBlank { current.studentId } },
+                cumulativeCredits = meta.totalCredit ?: current.cumulativeCredits,
+            )
+        }
+        setEnrichStatus(EnrichStatus.Idle)
     }
 
     /** UserCard「加载失败，点击重试」回调：重新打成绩页（上次失败未写缓存，这次会真重连）。 */

@@ -37,6 +37,12 @@ class NvzhuanbanApp : Application() {
         // 文字会「弹两次」复制菜单。必须在首个 Composition 之前设置，详见函数注释。
         disableDuplicateTextContextMenu()
 
+        // 预打开冷启动路径要读的全部 SharedPreferences 文件：getSharedPreferences 只触发各自
+        // 后台线程的磁盘加载，首次 get*() 才阻塞等待。先把文件全部打开（只开不读），下面各
+        // init() 的首读大多命中已加载缓存 —— 否则「打开一个→读一个」会让 7 次文件加载在
+        // 主线程上串行，全部叠在首帧之前。
+        STARTUP_PREFS_FILES.forEach { getSharedPreferences(it, MODE_PRIVATE) }
+
         ThemePrefs.init(this)
         AvatarPrefs.init(this)
         ScheduleHeightPrefs.init(this)
@@ -90,4 +96,21 @@ class NvzhuanbanApp : Application() {
     private fun currentVersionName(): String = runCatching {
         packageManager.getPackageInfo(packageName, 0).versionName
     }.getOrNull() ?: "0.0.0"
+
+    private companion object {
+        /**
+         * 冷启动会被同步首读的 SharedPreferences 文件名。与各 storage 类及
+         * [cn.jxnu.nvzhuanban.data.network.AuthStorage] 里私有的 PREF_NAME 一一对应 ——
+         * 那边改名时这里要跟着改（列表只用于预加载，漏一个只是回到串行加载，不影响正确性）。
+         */
+        val STARTUP_PREFS_FILES = listOf(
+            "theme_prefs",             // ThemePrefs
+            "avatar_prefs",            // AvatarPrefs
+            "schedule_height_prefs",   // ScheduleHeightPrefs
+            "course_overrides",        // CourseOverridesStore
+            "announcement_read_prefs", // AnnouncementReadAnchor
+            "update_prefs",            // UpdatePrefs
+            "jxnu_auth",               // AuthStorage（AuthRepository.init 内首读）
+        )
+    }
 }

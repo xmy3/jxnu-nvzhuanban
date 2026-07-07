@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.material.icons.outlined.EventSeat
@@ -30,7 +29,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -57,13 +55,17 @@ import cn.jxnu.nvzhuanban.R
 import cn.jxnu.nvzhuanban.data.model.Exam
 import cn.jxnu.nvzhuanban.data.model.ExamStatus
 import cn.jxnu.nvzhuanban.data.model.MakeupExam
+import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import kotlinx.coroutines.delay
+import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+private val EXAM_DATE_FMT = DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINA)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,10 +75,12 @@ fun ExamsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
-    // 每分钟刷新一次"当前时间"，让倒计时随时间真实跳变（跨过 00:00 时天数会少 1）
+    // statusAt/daysLeftFrom 只按日期推理（教务返回的具体时间不可靠），
+    // "当前时间"只在跨过 00:00 时才产生可见变化，睡到下个零点再刷新即可
     val now by produceState(initialValue = LocalDateTime.now()) {
         while (true) {
-            delay(60_000L)
+            val nextMidnight = LocalDateTime.now().toLocalDate().plusDays(1).atStartOfDay()
+            delay(Duration.between(LocalDateTime.now(), nextMidnight).toMillis().coerceAtLeast(1_000L))
             value = LocalDateTime.now()
         }
     }
@@ -85,14 +89,7 @@ fun ExamsScreen(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.exams_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.cd_back),
-                        )
-                    }
-                },
+                navigationIcon = { BackNavigationIcon(onBack) },
                 actions = {
                     RefreshIconButton(isRefreshing = isRefreshing, onClick = viewModel::refresh)
                 },
@@ -138,7 +135,7 @@ private fun ExamsList(bundle: ExamsBundle, now: LocalDateTime) {
     ) {
         // 补缓考无可靠日期、且通常即将发生 / 高优先级，置于即将到来之前突出显示
         if (makeup.isNotEmpty()) {
-            item {
+            item(contentType = "sectionHeader") {
                 MakeupSectionHeader(
                     count = makeup.size,
                     expanded = makeupExpanded,
@@ -146,22 +143,22 @@ private fun ExamsList(bundle: ExamsBundle, now: LocalDateTime) {
                 )
             }
             if (makeupExpanded) {
-                items(makeup, key = { "mk-${it.id}" }) { MakeupExamCard(exam = it) }
+                items(makeup, key = { "mk-${it.id}" }, contentType = { "makeup" }) { MakeupExamCard(exam = it) }
             }
         }
         if (upcoming.isNotEmpty()) {
-            item {
+            item(contentType = "sectionLabel") {
                 if (makeup.isNotEmpty()) Spacer(modifier = Modifier.height(8.dp))
                 SectionLabel(text = "即将到来 (${upcoming.size})")
             }
-            items(upcoming, key = { "ex-${it.id}" }) { ExamCard(exam = it, now = now) }
+            items(upcoming, key = { "ex-${it.id}" }, contentType = { "exam" }) { ExamCard(exam = it, now = now) }
         }
         if (finished.isNotEmpty()) {
-            item {
+            item(contentType = "sectionLabel") {
                 Spacer(modifier = Modifier.height(8.dp))
                 SectionLabel(text = "已结束 (${finished.size})")
             }
-            items(finished, key = { "ex-${it.id}" }) { ExamCard(exam = it, now = now) }
+            items(finished, key = { "ex-${it.id}" }, contentType = { "exam" }) { ExamCard(exam = it, now = now) }
         }
     }
 }
@@ -238,7 +235,7 @@ private fun ExamCard(exam: Exam, now: LocalDateTime) {
                 // 教务系统返回的具体时间不可靠（往往是 00:00），UI 只显示日期
                 ExamMetaRow(
                     icon = Icons.Outlined.AccessTime,
-                    text = exam.startTime.format(DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINA)),
+                    text = exam.startTime.format(EXAM_DATE_FMT),
                 )
                 ExamMetaRow(icon = Icons.Outlined.Place, text = exam.location)
                 exam.seat?.let { seat -> ExamMetaRow(icon = Icons.Outlined.EventSeat, text = seat) }

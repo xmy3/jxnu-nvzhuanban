@@ -1,20 +1,13 @@
 package cn.jxnu.nvzhuanban.ui.screens.exams
 
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import cn.jxnu.nvzhuanban.data.model.Exam
 import cn.jxnu.nvzhuanban.data.model.MakeupExam
-import cn.jxnu.nvzhuanban.data.network.toUserMessage
 import cn.jxnu.nvzhuanban.data.repository.ExamRepository
 import cn.jxnu.nvzhuanban.data.repository.MakeupExamRepository
-import cn.jxnu.nvzhuanban.ui.components.UiState
+import cn.jxnu.nvzhuanban.ui.components.UiStateViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 /**
  * 考试 Tab 同时承载「常规考试」和「补缓考」两份数据。
@@ -30,43 +23,11 @@ data class ExamsBundle(
 class ExamsViewModel(
     private val repo: ExamRepository = ExamRepository.instance,
     private val makeupRepo: MakeupExamRepository = MakeupExamRepository.instance,
-) : ViewModel() {
-
-    private val _state = MutableStateFlow<UiState<ExamsBundle>>(UiState.Loading)
-    val state: StateFlow<UiState<ExamsBundle>> = _state.asStateFlow()
-
-    private val _isRefreshing = MutableStateFlow(false)
-    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+) : UiStateViewModel<ExamsBundle>() {
 
     init { load() }
 
-    fun load() {
-        _state.value = UiState.Loading
-        viewModelScope.launch {
-            try {
-                _state.value = UiState.Success(fetchBoth(refresh = false))
-            } catch (t: Throwable) {
-                _state.value = UiState.Error(t.toUserMessage())
-            }
-        }
-    }
-
-    /** 下拉刷新：保留旧数据，仅顶部转圈；失败时静默保留旧数据。 */
-    fun refresh() {
-        if (_isRefreshing.value) return
-        _isRefreshing.value = true
-        viewModelScope.launch {
-            try {
-                _state.value = UiState.Success(fetchBoth(refresh = true))
-            } catch (_: Throwable) {
-                // 保留 _state；错误态走 load() 路径
-            } finally {
-                _isRefreshing.value = false
-            }
-        }
-    }
-
-    private suspend fun fetchBoth(refresh: Boolean): ExamsBundle = coroutineScope {
+    override suspend fun fetch(refresh: Boolean): ExamsBundle = coroutineScope {
         val exams = async {
             if (refresh) repo.refresh() else repo.getUpcomingExams()
         }

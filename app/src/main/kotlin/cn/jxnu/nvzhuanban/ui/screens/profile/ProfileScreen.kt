@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -52,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -68,6 +71,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -85,9 +89,11 @@ import cn.jxnu.nvzhuanban.data.model.formatCredit
 import cn.jxnu.nvzhuanban.data.storage.AvatarPrefs
 import cn.jxnu.nvzhuanban.data.storage.ThemeMode
 import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
+import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import cn.jxnu.nvzhuanban.ui.screens.announcement.openExternalHttpUrl
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,6 +110,7 @@ fun ProfileScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val latestRelease by viewModel.latestRelease.collectAsStateWithLifecycle()
     val isLoggingOut by viewModel.isLoggingOut.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
@@ -124,11 +131,22 @@ fun ProfileScreen(
     // 静默检查命中走的是 latestRelease StateFlow，跟这里完全独立。
     LaunchedEffect(viewModel) {
         viewModel.checkResult.collect { result ->
+            // showSnackbar 会挂起到 Snackbar 消失（Short ≈ 4s）。所有展示都放子协程，
+            // 让 collect 立即回到循环收终值；终值到达先 dismiss 掉还挂着的 Checking 提示。
             when (result) {
-                UpdateCheckResult.Checking -> snackbarHostState.showSnackbar("正在检查更新…")
-                UpdateCheckResult.Latest -> snackbarHostState.showSnackbar("当前已是最新版本 v$versionName")
-                is UpdateCheckResult.Newer -> showUpdateDialog = true
-                is UpdateCheckResult.Failed -> snackbarHostState.showSnackbar(result.message)
+                UpdateCheckResult.Checking -> launch { snackbarHostState.showSnackbar("正在检查更新…") }
+                UpdateCheckResult.Latest -> {
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    launch { snackbarHostState.showSnackbar("当前已是最新版本 v$versionName") }
+                }
+                is UpdateCheckResult.Newer -> {
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    showUpdateDialog = true
+                }
+                is UpdateCheckResult.Failed -> {
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    launch { snackbarHostState.showSnackbar(result.message) }
+                }
             }
         }
     }
@@ -137,6 +155,9 @@ fun ProfileScreen(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.profile_title)) },
+                actions = {
+                    RefreshIconButton(isRefreshing = isRefreshing, onClick = viewModel::refresh)
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
             )
         },
@@ -291,12 +312,12 @@ private fun UserCard(
                 modifier = Modifier
                     .size(64.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White.copy(alpha = 0.2f)),
+                    .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)),
                 fallback = {
                     Icon(
                         imageVector = Icons.Outlined.Person,
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(36.dp),
                     )
                 },
@@ -307,13 +328,13 @@ private fun UserCard(
                     text = user.name,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onPrimary,
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "${user.studentId} · ${user.grade} 级",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
                 )
                 // 学院/专业/班级 由 ProfileViewModel.enrichFromGrades 后台异步从成绩页补上；
                 // 首次进 App 还在加载时这几行可能为空，此时显示 "加载中…" 占位
@@ -325,14 +346,14 @@ private fun UserCard(
                     Text(
                         text = collegeMajor,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.85f),
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
                     )
                 }
                 if (user.className.isNotBlank()) {
                     Text(
                         text = user.className,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.85f),
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
                     )
                 }
                 // 学院/专业/班级 由 ProfileViewModel.enrichFromGrades 后台异步从成绩页补上。
@@ -342,13 +363,17 @@ private fun UserCard(
                         EnrichStatus.Loading -> Text(
                             text = "学院信息加载中…",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.7f),
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
                         )
                         EnrichStatus.Failed -> Text(
                             text = "学院信息加载失败，点击重试",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.clickable(onClick = onRetryEnrich),
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
+                            // 这是 enrich 失败后屏内唯一的恢复入口：撑到 48dp 最小点按目标并
+                            // 播报为按钮，避免一行小字点不中 / TalkBack 听不出可操作
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .clickable(role = Role.Button, onClick = onRetryEnrich),
                         )
                         // 加载完成但成绩页确实没给学院信息（极少见，如无成绩的新生）：不显示占位
                         EnrichStatus.Idle -> Unit
@@ -574,10 +599,17 @@ private fun SettingsToggleRow(
     enabled: Boolean = true,
 ) {
     val contentAlpha = if (enabled) 1f else 0.5f
+    // toggleable 把整行做成单个 Switch 语义节点（TalkBack 合并播报标签+开关状态），
+    // 行内 Switch 的 onCheckedChange 置 null 退化为纯视觉指示器，避免出现第二个焦点
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .let { if (enabled) it.clickable { onCheckedChange(!checked) } else it }
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -604,7 +636,7 @@ private fun SettingsToggleRow(
         }
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             enabled = enabled,
         )
     }
@@ -703,16 +735,22 @@ private fun ThemeChoiceDialog(
         text = {
             Column {
                 ThemeMode.entries.forEach { mode ->
+                    // selectable(Role.RadioButton) 让整行成为单个单选语义节点，
+                    // RadioButton onClick 置 null 只做视觉指示（下方动态取色行的 Switch 同理）
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onSelect(mode) }
+                            .selectable(
+                                selected = mode == current,
+                                role = Role.RadioButton,
+                                onClick = { onSelect(mode) },
+                            )
                             .padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
                             selected = mode == current,
-                            onClick = { onSelect(mode) },
+                            onClick = null,
                         )
                         Spacer(Modifier.width(8.dp))
                         Icon(
@@ -732,7 +770,12 @@ private fun ThemeChoiceDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .let { if (dynamicAvailable) it.clickable { onDynamicColorToggle(!effectiveDynamic) } else it }
+                        .toggleable(
+                            value = effectiveDynamic,
+                            enabled = dynamicAvailable,
+                            role = Role.Switch,
+                            onValueChange = onDynamicColorToggle,
+                        )
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -765,7 +808,7 @@ private fun ThemeChoiceDialog(
                     }
                     Switch(
                         checked = effectiveDynamic,
-                        onCheckedChange = onDynamicColorToggle,
+                        onCheckedChange = null,
                         enabled = dynamicAvailable,
                     )
                 }

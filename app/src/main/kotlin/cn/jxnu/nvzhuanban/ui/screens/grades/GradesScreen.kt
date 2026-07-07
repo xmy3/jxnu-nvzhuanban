@@ -15,16 +15,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
@@ -38,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +49,7 @@ import cn.jxnu.nvzhuanban.R
 import cn.jxnu.nvzhuanban.data.model.Grade
 import cn.jxnu.nvzhuanban.data.model.SemesterSummary
 import cn.jxnu.nvzhuanban.data.model.formatCredit
+import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
@@ -85,14 +83,7 @@ fun GradesScreen(
             Column {
                 TopAppBar(
                     title = { Text(stringResource(R.string.grades_title)) },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.ArrowBack,
-                                contentDescription = stringResource(R.string.cd_back),
-                            )
-                        }
-                    },
+                    navigationIcon = { BackNavigationIcon(onBack) },
                     actions = {
                         RefreshIconButton(isRefreshing = activeRefreshing, onClick = onActiveRefresh)
                     },
@@ -110,10 +101,14 @@ fun GradesScreen(
             }
         },
     ) { padding ->
+        // 按 Tab 保存/恢复子树状态，互切时两个列表的滚动位置不丢
+        val stateHolder = rememberSaveableStateHolder()
         Box(modifier = Modifier.padding(padding)) {
-            when (currentTab) {
-                GradesTab.Semester -> SemesterGradesContent(viewModel = semesterViewModel)
-                GradesTab.Test -> TestGradesContent(viewModel = testViewModel)
+            stateHolder.SaveableStateProvider(currentTab.name) {
+                when (currentTab) {
+                    GradesTab.Semester -> SemesterGradesContent(viewModel = semesterViewModel)
+                    GradesTab.Test -> TestGradesContent(viewModel = testViewModel)
+                }
             }
         }
     }
@@ -178,8 +173,8 @@ private fun GradesList(
             )
         }
         semesters.forEach { sem ->
-            item(key = "header_${sem.semester}") { SemesterHeader(sem) }
-            items(sem.grades, key = { it.id }) { g -> GradeRow(g) }
+            item(key = "header_${sem.semester}", contentType = "semHeader") { SemesterHeader(sem) }
+            items(sem.grades, key = { it.id }, contentType = { "grade" }) { g -> GradeRow(g) }
         }
         item { Spacer(modifier = Modifier.height(8.dp)) }
     }
@@ -395,16 +390,4 @@ private fun Tag(text: String, primary: Boolean, warning: Boolean = false) {
             .background(containerColor)
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
-}
-
-@Composable
-private fun scoreColor(score: String): androidx.compose.ui.graphics.Color {
-    val num = score.toFloatOrNull()
-    return when {
-        num == null -> MaterialTheme.colorScheme.tertiary  // "良好"、"通过" 等
-        num >= 90 -> MaterialTheme.colorScheme.primary
-        num >= 80 -> MaterialTheme.colorScheme.tertiary
-        num >= 60 -> MaterialTheme.colorScheme.secondary
-        else -> MaterialTheme.colorScheme.error
-    }
 }

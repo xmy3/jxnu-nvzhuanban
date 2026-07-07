@@ -26,10 +26,12 @@ import java.security.KeyStore
 class SecureCredentialStore(context: Context) {
 
     private val appContext = context.applicationContext
-    private val prefs: SharedPreferences? by lazy { createEncryptedPrefsOrNull(appContext) }
-
-    init {
+    private val prefs: SharedPreferences? by lazy {
+        // 历史明文兜底文件的清理跟随 prefs 首次访问（tryRestoreSession 的 IO 协程）执行，
+        // 不放构造器 —— 构造器在 AuthRepository.init 的主线程冷启动路径上，会为一个几乎
+        // 必为空的文件多付一次 prefs 加载 + 空写盘。
         clearLegacyPlaintextFallback(appContext)
+        createEncryptedPrefsOrNull(appContext)
     }
 
     /** 保存账号密码，调用前应确认 rememberMe == true。 */

@@ -97,6 +97,42 @@ class ArticleDetailPageTest {
         assertNotNull("应解析出图片块", img)
         assertEquals("https://jwc.jxnu.edu.cn/files/exam_room_map.jpg", img!!.src)
         assertEquals("考场分布图", img.alt)
+        // fixture 里的 img 不带 width/height 属性 → 无宽高信息，UI 退回最小高度占位
+        assertNull(img.widthPx)
+        assertNull(img.heightPx)
+        assertNull(img.aspectRatio)
+    }
+
+    /**
+     * `<img>` 的像素 width/height 属性（Word 粘贴产物通常带）要进模型，
+     * 供 UI 在加载前按宽高比精确预占位；百分比 / auto 等非像素值不算数。
+     */
+    @Test
+    fun `img pixel width and height attributes are captured, non-pixel values ignored`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-05-22 16:28:25】</div>
+                <div id="main-content" class="line padding">
+                  <p><img src="../files/a.jpg" width="554" height="312"></p>
+                  <p><img src="../files/b.jpg" width="100%" height="auto"></p>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val images = parsed.blocks.filterIsInstance<ArticleBlock.Image>()
+        assertEquals(2, images.size)
+
+        assertEquals(554, images[0].widthPx)
+        assertEquals(312, images[0].heightPx)
+        assertEquals(554f / 312f, images[0].aspectRatio!!, 1e-6f)
+
+        assertNull(images[1].widthPx)
+        assertNull(images[1].heightPx)
+        assertNull(images[1].aspectRatio)
     }
 
     @Test

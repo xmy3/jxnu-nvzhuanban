@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.Button
@@ -46,6 +45,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import cn.jxnu.nvzhuanban.R
+import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 
 private const val CLASSROOM_URL = "https://xmy3.github.io/jxnu-classroom/#/"
 private const val CLASSROOM_HOST = "xmy3.github.io"
@@ -59,9 +59,12 @@ fun ClassroomScreen(onBack: () -> Unit) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    // canGoBack 必须是可观察状态：SPA 的 hash 路由跳转不触发任何重组，
+    // 组合时直接调 webView.canGoBack() 会一直停在旧值上
+    var canGoBack by remember { mutableStateOf(false) }
 
     // WebView 内部历史优先：先吃掉 WebView 内的后退，吃完再让系统按 onBack 退出本页
-    BackHandler(enabled = webView?.canGoBack() == true) {
+    BackHandler(enabled = canGoBack) {
         webView?.goBack()
     }
 
@@ -82,11 +85,7 @@ fun ClassroomScreen(onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.classroom_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.cd_back))
-                    }
-                },
+                navigationIcon = { BackNavigationIcon(onBack) },
                 actions = {
                     IconButton(onClick = {
                         errorMessage = null
@@ -148,6 +147,11 @@ fun ClassroomScreen(onBack: () -> Unit) {
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 loading = false
+                            }
+
+                            override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                                // hash 路由的站内跳转不走 onPageStarted/onPageFinished，只有这里会回调
+                                canGoBack = view?.canGoBack() == true
                             }
 
                             override fun onReceivedError(
