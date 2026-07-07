@@ -21,8 +21,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -157,8 +159,19 @@ fun AppNav() {
         }
     }
 
+    // expiredSignal 是进程级、只增不减的计数器；Activity 重建后的新 Composition 会带着
+    // 历史值重新执行 LaunchedEffect。若直接判 `> 0`，一次真实过期之后的任何一次重建
+    // （旋转 / 深浅色 / 系统回收恢复）都会用陈旧信号把刚登录的有效会话再注销一遍。
+    // 以首帧的当前值为基线，只对之后的**增量**反应。代价：Composition 不存在的区间
+    // （重建全程）到达的信号会被基线吞掉 —— 但那种情况下会话本来就已失效，下一个
+    // 走 *Auth 的业务请求会再次广播，最多延迟一拍，不会永久漏踢。
+    var handledExpiredSignal by remember { mutableIntStateOf(SessionEvents.expiredSignal.value) }
     LaunchedEffect(sessionExpiredSignal) {
-        if (sessionExpiredSignal <= 0) return@LaunchedEffect
+        if (sessionExpiredSignal <= handledExpiredSignal) return@LaunchedEffect
+        handledExpiredSignal = sessionExpiredSignal
+        // 用户已经在登录页时的信号是被踢出后 in-flight 请求补发的残留 ——
+        // 只推进基线不再注销，避免把用户刚输完的登录状态搅乱。
+        if (nav.currentBackStackEntry?.destination?.route == Routes.LOGIN) return@LaunchedEffect
         authRepo.expireSession()
     }
 

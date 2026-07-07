@@ -2,6 +2,8 @@ package cn.jxnu.nvzhuanban.data.network.pages
 
 import cn.jxnu.nvzhuanban.data.model.Grade
 import cn.jxnu.nvzhuanban.data.model.SemesterSummary
+import cn.jxnu.nvzhuanban.data.network.JwcError
+import cn.jxnu.nvzhuanban.data.network.JwcException
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 
@@ -37,6 +39,20 @@ object GradePage {
 
     fun parse(html: String): Parsed {
         val doc = Jsoup.parse(html)
+        // 结构性 fail-fast：lblMsg（个人信息）和 dgContent（成绩表）两个锚点同时缺失，
+        // 说明这不是成绩页 —— 最常见是半失效会话下 jwc 返回 200 的业务壳页
+        // （JwcResponseGuard 只能识别登录页形态，拦不住这种）。之前静默解析成
+        // 「空 meta + 0 条成绩」还会被 GradeRepository 写进缓存，用户看到的是
+        // 无提示的空成绩单。抛 Decode 让 UI 走错误态、缓存保持未污染。
+        // 注意用「两个都缺」判定：真实成绩页哪怕暂无成绩（大一新生），lblMsg 也在。
+        if (doc.selectFirst("[id$=_lblMsg]") == null &&
+            doc.selectFirst("table[id$=_dgContent]") == null
+        ) {
+            throw JwcException(
+                JwcError.Decode("成绩页缺少个人信息与成绩表锚点，可能是会话半失效返回的壳页面"),
+                "成绩页加载异常，请下拉刷新重试；若持续出现请重新登录",
+            )
+        }
         val meta = parseMeta(doc)
         val grades = parseGrades(doc)
         // groupBy 保留遍历顺序，等同于教务系统的显示顺序（最新学期在前）。

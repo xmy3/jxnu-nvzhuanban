@@ -83,6 +83,15 @@ class AuthRepository private constructor(
     }
 
     private suspend fun onLoginSuccess(username: String, password: String) {
+        // 换号登录检测：上一个成功登录的用户和这次不同，说明设备易主/换账号，
+        // 上一用户的本地派生数据（周次覆盖 / 已读锚点 / widget 快照）必须清掉。
+        // 同一用户重登（会话过期后最常见的路径）则全部保留。
+        val previousUser = storage.lastLoggedUser
+        if (previousUser != null && previousUser != username) {
+            // 清理链路含 SharedPreferences / widget 快照文件删除，切 IO 防主线程卡顿
+            withContext(Dispatchers.IO) { clearAllUserDataOnSignOut() }
+        }
+        storage.lastLoggedUser = username
         // 凭证落盘是 Tink 加密 + fsync 的同步写（save 用 commit 才能拿到成败位），必须切 IO，
         // 否则手动登录这一下会在主线程（viewModelScope 默认 Main）卡顿，低端机上是 ANR 隐患。
         withContext(Dispatchers.IO) {
@@ -141,6 +150,14 @@ class AuthRepository private constructor(
                 ?: UserDefaultPage.parse(username, "")
             // 解析失败（极端情况：HTML 结构变了）连学号都没有 → 视为未登录，强制重登
             if (profile.studentId.isBlank()) return@withLock false
+            // cookie 直连路径同样要记录/比对「上一个登录用户」——否则一直靠 cookie 续命的
+            // 存量用户 lastLoggedUser 永远是 null，换号检测失效。JXNU 的 CAS 登录名就是
+            // 学号，与 onLoginSuccess 记录的 username 同一口径。
+            val previousUser = storage.lastLoggedUser
+            if (previousUser != null && previousUser != profile.studentId) {
+                withContext(Dispatchers.IO) { clearAllUserDataOnSignOut() }
+            }
+            storage.lastLoggedUser = profile.studentId
             // cookie 直接有效本身就是"自动通道成功"，重置 throttle
             autoLoginThrottle.recordSuccess()
             _state.value = AuthState.LoggedIn(profile)
@@ -177,7 +194,11 @@ class AuthRepository private constructor(
 
     suspend fun expireSession(message: String = "登录已过期，请重新登录") = authMutex.withLock {
         cas.logout()
-        clearAllUserDataOnSignOut()
+        // 只清内存缓存（会话相关、可重新拉取），**不**清 CourseOverridesStore / 已读锚点 /
+        // widget 快照这类同账号的本地数据 —— 会话过期是可自愈事件，预期同一用户马上重登
+        // （凭证也特意保留了），不应把它当成主动登出销毁用户手工维护的数据。
+        // 换号场景的清理由 onLoginSuccess 的换号检测兜底。
+        clearRepositoryCaches()
         _state.value = AuthState.Error(message)
     }
 
@@ -241,6 +262,14 @@ class AuthRepository private constructor(
      * 注意：调用方已持有 [authMutex]，这里串行执行即可，不会和并发的 login 抢锁。
      */
     private suspend fun clearAllUserDataOnSignOut() {
+        clearRepositoryCaches()
+        CourseOverridesStore.clearAll()
+        AnnouncementReadAnchor.clear()
+        clearWidgetSnapshotOnSignOut()
+    }
+
+    /** 仅清各 Repository 单例的内存缓存 —— 会话过期时用（数据可在重登后重新拉取）。 */
+    private suspend fun clearRepositoryCaches() {
         ScheduleRepository.instance.clearCache()
         GradeRepository.instance.clearCache()
         TestGradeRepository.instance.clearCache()
@@ -253,9 +282,6 @@ class AuthRepository private constructor(
         TeacherDetailRepository.instance.clearCache()
         StudentRepository.instance.clearCache()
         StudentDetailRepository.instance.clearCache()
-        CourseOverridesStore.clearAll()
-        AnnouncementReadAnchor.clear()
-        clearWidgetSnapshotOnSignOut()
     }
 
     private suspend fun clearWidgetSnapshotOnSignOut() {

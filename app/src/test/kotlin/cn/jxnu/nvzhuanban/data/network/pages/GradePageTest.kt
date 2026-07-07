@@ -1,8 +1,11 @@
 package cn.jxnu.nvzhuanban.data.network.pages
 
+import cn.jxnu.nvzhuanban.data.network.JwcError
+import cn.jxnu.nvzhuanban.data.network.JwcException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -77,11 +80,31 @@ class GradePageTest {
     }
 
     @Test
-    fun `returns empty meta when lblMsg missing`() {
-        val parsed = GradePage.parse("<html><body></body></html>")
+    fun `returns empty meta when lblMsg missing but grade table present`() {
+        // 只缺 lblMsg 不算壳页（成绩表锚点还在），meta 降级为空但不抛
+        val html = """
+            <html><body>
+            <table id="_ctl6_dgContent">
+              <tr><td>考试时间</td><td>课程号</td><td>课程名称</td><td>所得学分</td><td>课程成绩</td><td>补考成绩</td><td>标准分</td><td>备注</td></tr>
+            </table>
+            </body></html>
+        """.trimIndent()
+        val parsed = GradePage.parse(html)
         assertNotNull(parsed.meta)
         assertNull(parsed.meta.college)
         assertNull(parsed.meta.totalCredit)
+    }
+
+    @Test
+    fun `throws decode error on shell page missing both anchors`() {
+        // 会话半失效时 jwc 可能返回 200 的业务壳页（有框架无数据）。JwcResponseGuard
+        // 只能识别登录页形态，拦不住它；解析器必须 fail-fast 而不是静默解析成
+        // 「空 meta + 0 条成绩」——否则空结果被 GradeRepository 缓存，用户看到
+        // 无提示的空成绩单（回归保护：间歇性"成绩看不到"）。
+        val thrown = assertThrows(JwcException::class.java) {
+            GradePage.parse("<html><body><div>页面框架</div></body></html>")
+        }
+        assertTrue(thrown.error is JwcError.Decode)
     }
 
     private companion object {

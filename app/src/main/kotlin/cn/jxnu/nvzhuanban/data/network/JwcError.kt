@@ -34,7 +34,9 @@ fun JwcError.toUserMessage(): String = when (this) {
 }
 
 fun Throwable.toUserMessage(fallback: String = "加载失败"): String = when (this) {
-    is JwcException -> error.toUserMessage()
+    // JwcException.message 非空且默认就是 error.toUserMessage()；调用方传了定制文案
+    // （如 GradePage 壳页的「请下拉刷新重试」引导）时优先展示定制文案。
+    is JwcException -> message
     is SocketTimeoutException -> JwcError.Network(message).toUserMessage()
     is UnknownHostException -> JwcError.Network(message).toUserMessage()
     is SSLException -> JwcError.Ssl(message).toUserMessage()
