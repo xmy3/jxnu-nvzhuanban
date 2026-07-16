@@ -19,6 +19,8 @@ data class LoginUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val success: Boolean = false,
+    /** 本机是否存有可一键重登的加密凭证——true 时登录页展示「用已保存的密码登录」按钮。 */
+    val hasSavedCredentials: Boolean = false,
 )
 
 class LoginViewModel(
@@ -29,6 +31,7 @@ class LoginViewModel(
         LoginUiState(
             username = authRepo.rememberedUsername().orEmpty(),
             rememberMe = authRepo.isRememberMeOn(),
+            hasSavedCredentials = authRepo.hasSavedCredentials(),
         )
     )
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
@@ -73,6 +76,31 @@ class LoginViewModel(
                     it.copy(
                         isLoading = false,
                         error = t.toUserMessage("登录失败，请稍后再试"),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 「使用已保存的密码登录」一键重登。走手动登录通道（不受自动通道节流阻挡、驱动 Loading/LoggedIn），
+     * 成功后与手输登录同样置 success 触发导航。失败（含凭证被并发清掉）落 error 文案，用户可改手输。
+     */
+    fun submitSaved() {
+        val cur = _state.value
+        if (cur.isLoading) return
+        _state.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            try {
+                authRepo.loginWithSavedCredentials()
+                _state.update { it.copy(isLoading = false, success = true, password = "") }
+            } catch (t: Throwable) {
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        error = t.toUserMessage("自动登录失败，请手动输入密码"),
+                        // 凭证可能已被清（密码已改场景）——重新查一次决定还要不要显示该按钮
+                        hasSavedCredentials = authRepo.hasSavedCredentials(),
                     )
                 }
             }

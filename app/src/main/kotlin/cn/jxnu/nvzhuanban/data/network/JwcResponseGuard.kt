@@ -50,6 +50,17 @@ object JwcResponseGuard {
     }
 
     /**
+     * 给 [JwcClient.getBytes] 用：图片端点回了「看起来是 HTML」的字节时，嗅一下是不是登录页。
+     * 是 → 抛 SessionExpired（让 getBytesAuth 触发重登重放），否则静默放行（可能只是 SVG / 内联 HTML）。
+     */
+    fun assertNotLoginPage(bytes: ByteArray) {
+        val head = bytes.take(MAX_PROBE_BYTES).toByteArray().toString(Charsets.UTF_8)
+        if (looksLikeLoginPage(head)) {
+            throw JwcException(JwcError.SessionExpired)
+        }
+    }
+
+    /**
      * 结构化判断"这是不是一张登录页"。
      *
      * 之前用子串扫描（`"__RSA__" in body`、`"name=\"execution\"" in body`），假阳性：

@@ -123,6 +123,23 @@ class JwcResponseGuardTest {
         assertEquals(JwcError.EmptyResponse, thrown.error)
     }
 
+    @Test
+    fun `assertNotLoginPage throws on login-form bytes`() {
+        // 图片端点回了「其实是登录页」的 HTML 字节 → 必须转成 SessionExpired 让 getBytesAuth 重登。
+        val body = """<html><form id="loginForm" action="/cas/login">
+            <input name="passwordEncrypt" value="__RSA__x"></form></html>"""
+        val thrown = assertThrows(JwcException::class.java) {
+            JwcResponseGuard.assertNotLoginPage(body.toByteArray())
+        }
+        assertEquals(JwcError.SessionExpired, thrown.error)
+    }
+
+    @Test
+    fun `assertNotLoginPage passes through real image-ish bytes`() {
+        // 普通（非登录页）字节不应被误判 —— 不抛即通过
+        JwcResponseGuard.assertNotLoginPage("<svg><rect/></svg>".toByteArray())
+    }
+
     private fun response(url: String, code: Int, body: String): Response =
         Response.Builder()
             .request(Request.Builder().url(url).build())

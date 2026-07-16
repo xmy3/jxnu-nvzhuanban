@@ -74,6 +74,13 @@ object UserDefaultPage {
     }
 
     /**
+     * 只从 `/User/Default.aspx` 的 HTML 里抽学号，抽不到返回 null。
+     * 供 [cn.jxnu.nvzhuanban.data.network.CasLoginClient.tryRefreshViaSso] 判「是否真的已登录」用：
+     * 匿名 / 登录页里没有 lblUserInfor，解不出学号即视为续票失败。
+     */
+    internal fun extractStudentId(html: String): String? = extractIdAndName(html).first
+
+    /**
      * 从 `欢迎您，(学号,Student) 姓名` 中抓 (学号, 姓名)。任何一段抓不到返回 null。
      */
     private fun extractIdAndName(html: String): Pair<String?, String?> {

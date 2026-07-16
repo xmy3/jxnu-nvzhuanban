@@ -117,6 +117,10 @@ fun LoginScreen(
                     keyboard?.hide()
                     viewModel.submit()
                 },
+                onSubmitSaved = {
+                    keyboard?.hide()
+                    viewModel.submitSaved()
+                },
                 onHelpClick = { showHelp = true },
             )
             Spacer(Modifier.height(16.dp))
@@ -171,6 +175,7 @@ private fun LoginCard(
     onPasswordChange: (String) -> Unit,
     onRememberMeChange: (Boolean) -> Unit,
     onSubmit: () -> Unit,
+    onSubmitSaved: () -> Unit,
     onHelpClick: () -> Unit,
 ) {
     Card(
@@ -249,6 +254,19 @@ private fun LoginCard(
                         text = stringResource(R.string.login_button),
                         style = MaterialTheme.typography.titleMedium,
                     )
+                }
+            }
+            // 「使用已保存的密码登录」——被会话过期/冷启动踢回登录页时，本机存有加密密码即可一键重登，
+            // 无需手敲统一身份认证密码。走手动登录通道（不受自动通道节流阻挡）。
+            if (state.hasSavedCredentials) {
+                TextButton(
+                    onClick = onSubmitSaved,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                    enabled = !state.isLoading,
+                ) {
+                    Text(stringResource(R.string.login_button_saved))
                 }
             }
         }

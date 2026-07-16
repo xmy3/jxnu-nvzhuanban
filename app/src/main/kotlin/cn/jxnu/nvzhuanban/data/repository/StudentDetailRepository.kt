@@ -15,21 +15,26 @@ import kotlinx.coroutines.sync.withLock
  */
 class StudentDetailRepository {
 
+    // 缓存用 map intrinsic monitor 保护，独立于 coroutine [mutex]，好让 [clearCache] 无锁清空——
+    // 避免 repo.mutex ⇄ authMutex 跨锁死锁（见 GradeRepository.clearCache）。
     private val cache = mutableMapOf<String, StudentInfo>()
     private val mutex = Mutex()
 
     suspend fun fetch(userNum: String): StudentInfo = mutex.withLock {
-        cache[userNum]?.let { return@withLock it }
+        synchronized(cache) { cache[userNum] }?.let { return@withLock it }
         val html = JwcClient.getHtmlAuth(
             JxnuUrls.studentDetailUrl(userNum),
             "学生信息页返回空响应",
         )
         val parsed = StudentDetailPage.parse(html)
-        cache[userNum] = parsed
+        synchronized(cache) { cache[userNum] = parsed }
         parsed
     }
 
-    suspend fun clearCache() = mutex.withLock { cache.clear() }
+    /** 退登清空。**无锁、非 suspend**（只锁 map monitor），避免 repo.mutex ⇄ authMutex 跨锁死锁。 */
+    fun clearCache() {
+        synchronized(cache) { cache.clear() }
+    }
 
     companion object {
         val instance: StudentDetailRepository by lazy { StudentDetailRepository() }

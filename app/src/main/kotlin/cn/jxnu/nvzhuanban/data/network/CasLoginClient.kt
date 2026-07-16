@@ -1,6 +1,7 @@
 package cn.jxnu.nvzhuanban.data.network
 
 import android.content.Context
+import cn.jxnu.nvzhuanban.data.network.pages.UserDefaultPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
@@ -31,19 +32,61 @@ class CasLoginClient(
 
     sealed interface Result {
         data object Success : Result
+
         /**
-         * [isAuth] = true 表示这是 CAS 明确拒绝认证（账号密码错 / 锁定 / 需 MFA 等），
-         * 上层据此判断"凭证已失效，应清掉本地保存的密码"。
-         * 默认 false 涵盖网络异常、教务网 5xx、HTML 结构异常等瞬时/未知失败 ——
-         * 这种情况下不能清凭证（否则用户切到差网络一次就丢密码）。
+         * CAS **明确拒绝了这套凭证**：密码错、账号锁定/冻结/停用/不存在、需改密等。
+         * 上层据此清掉本地保存的密码（继续用只会反复失败、甚至把账号打锁）。
          */
-        data class Failure(val message: String, val isAuth: Boolean = false) : Result
+        data class InvalidCredentials(val message: String) : Result
+
+        /**
+         * **瞬时 / 未知失败**：网络异常、TLS 失败、jwc 5xx、登录页结构异常、落点未识别，
+         * 以及「CAS 落回登录页但看起来是验证码 / 风控要求」——这些都**不能**清凭证（凭证多半仍有效，
+         * 只是此刻环境不允许登录），也**不该**据此把用户踢到登录页，稍后重试即可恢复。
+         */
+        data class Transient(val message: String) : Result
+    }
+
+    /** 探测本地会话是否仍然可用。三态区分「确实失效」与「网络够不着」，让上层能乐观放行。 */
+    sealed interface SessionProbe {
+        /** 会话有效，附带已经取到的 `/User/Default.aspx` HTML，调用方可直接解析，省一次往返。 */
+        data class Valid(val html: String) : SessionProbe
+        /** 会话确证失效（无 jwc cookie / 被踢回登录页 / jwc 5xx）——必须重新登录。 */
+        data object Invalid : SessionProbe
+        /** 网络够不着（超时 / DNS / TLS）——不知道会话死没死，别据此销毁本地会话。 */
+        data object Unreachable : SessionProbe
     }
 
     /** [fetchExecutionToken] 的细分结果，便于区分网络失败 / 重定向 / HTML 结构异常。 */
     private sealed interface ExecutionResult {
         data class Ok(val token: String) : ExecutionResult
         data class Bad(val message: String) : ExecutionResult
+    }
+
+    /**
+     * 免密 SSO 续票：**不清任何 cookie**，直接 GET `/cas/login?service=…`。
+     * 若本地 CAS 的 TGC 仍有效，CAS 会 302 带 service ticket 回 jwc → jwc 落新 session cookie。
+     * 成功判据是**能真正解析出已登录首页**（lblUserInfor 学号），而不是「落点在 jwc 且不像登录页」——
+     * 后者会被匿名可见的 Portal 壳页骗过（假续票成功）。
+     *
+     * @return true = 续票成功、jwc 会话已刷新；false = TGC 失效或网络失败，需退回完整账密登录。
+     *
+     * 全程 raw OkHttp（不走 *Auth），因此调用方（[AuthRepository] 持 authMutex）不会重入 SessionRecovery。
+     */
+    suspend fun tryRefreshViaSso(): Boolean = withContext(Dispatchers.IO) {
+        // 本地压根没有 TGC 就别发这一枪：注定 302 回登录表单，纯浪费 + 徒增对 CAS 的打点。
+        if (!httpClient.cookieJar.hasCasTgc()) return@withContext false
+        runCatching {
+            // GET 登录入口：TGC 有效 → CAS 302 换票 → OkHttp 跟随重定向落到 jwc。
+            val entryReq = Request.Builder().url(JxnuUrls.casLoginEntry()).get().build()
+            httpClient.client.newCall(entryReq).execute().use { it.body.string() }
+            // 用 /User/Default.aspx 复验：解得出学号才算真的登进去了。
+            val probeReq = Request.Builder().url(JxnuUrls.USER_DEFAULT).get().build()
+            httpClient.client.newCall(probeReq).execute().use { resp ->
+                val html = JwcResponseGuard.readJwcHtml(resp, "用户首页返回空响应")
+                UserDefaultPage.extractStudentId(html)?.isNotBlank() == true
+            }
+        }.getOrDefault(false)
     }
 
     suspend fun login(
@@ -66,14 +109,15 @@ class CasLoginClient(
             val loginEntryUrl = JxnuUrls.casLoginEntry()
             val execution = when (val r = fetchExecutionToken(loginEntryUrl)) {
                 is ExecutionResult.Ok -> r.token
-                is ExecutionResult.Bad -> return@runCatching Result.Failure(r.message)
+                // 登录页结构异常 / 被 302 走 SSO / 网络失败 —— 都不是「凭证错」，归瞬时，别清密码。
+                is ExecutionResult.Bad -> return@runCatching Result.Transient(r.message)
             }
 
             val publicKeyMaterial = fetchPublicKey()
             val encryptedPassword = runCatching {
                 RsaPasswordEncryptor.encryptPassword(password, publicKeyMaterial)
             }.getOrElse {
-                return@runCatching Result.Failure("密码加密失败：${it.message}")
+                return@runCatching Result.Transient("密码加密失败：${it.message}")
             }
 
             val visitorId = DeviceFingerprint.visitorId(appContext, authStorage)
@@ -106,38 +150,52 @@ class CasLoginClient(
                 val finalHost = resp.request.url.host
                 when {
                     !resp.isSuccessful && resp.code !in 300..399 ->
-                        Result.Failure("登录失败：HTTP ${resp.code}")
+                        Result.Transient("登录失败：HTTP ${resp.code}")
 
                     finalHost == JxnuUrls.JWC_HOST -> Result.Success
 
                     finalHost == JxnuUrls.CAS_HOST && finalUrl.contains("/cas/login") -> {
+                        // 落回 CAS 登录页：**默认认定凭证失效**（清密码是安全默认，防旧密码反复打 CAS 锁号）。
+                        // 只有明确嗅探到「验证码 / 风控 / 系统繁忙」这类**环境性**拒绝时才降级为 Transient 保留凭证——
+                        // 这些是白名单，识别不出（含错误文案抓不到的常见情况）一律当密码错清凭证。
                         val body = resp.body.string()
-                        val errorMessage = parseCasError(body) ?: "账号或密码错误"
-                        Result.Failure(errorMessage, isAuth = true)
+                        classifyCasRejection(body)
                     }
 
-                    else -> Result.Failure("登录后落点未识别：$finalUrl")
+                    else -> Result.Transient("登录后落点未识别：$finalUrl")
                 }
             }
         }.getOrElse { e ->
-            Result.Failure(formatException(e))
+            Result.Transient(formatException(e))
         }
     }
 
-    /** 探测当前 cookie 是否还能登录：尝试 GET /User/Default.aspx，看是否被踢回 CAS 登录页。 */
-    suspend fun validateSession(): Boolean = withContext(Dispatchers.IO) {
-        if (!httpClient.cookieJar.hasJwcSession()) return@withContext false
-        runCatching {
+    /**
+     * 探测当前 cookie 是否还能登录：GET `/User/Default.aspx`，三态区分「有效 / 确证失效 / 网络够不着」。
+     *
+     * 关键：**只有真正的网络异常（IOException：超时 / DNS / TLS）才归 [SessionProbe.Unreachable]**。
+     * `JwcException(SessionExpired)`、无 jwc cookie、jwc 5xx 都是「确证失效」→ [SessionProbe.Invalid]。
+     * 弄反会致命：把「确定已死的会话」当成离线乐观放行，用户永远进不去也永不提示重登。
+     *
+     * [SessionProbe.Valid] 携带已取到的首页 HTML，[AuthRepository.tryRestoreSession] 可直接解析，
+     * 省掉紧接着 fetchAndParse 对同一 URL 的第二次 GET。
+     */
+    suspend fun probeSession(): SessionProbe = withContext(Dispatchers.IO) {
+        if (!httpClient.cookieJar.hasJwcSession()) return@withContext SessionProbe.Invalid
+        try {
             val req = Request.Builder().url(JxnuUrls.USER_DEFAULT).get().build()
             httpClient.client.newCall(req).execute().use { resp ->
-                // 复用业务页守卫：HTTP 200 但实为登录页 / 跳 CAS / 跳 SSO 重登页都会抛，
-                // 不抛才算真正的已登录工作台。旧实现只看「200 + 落点在 jwc host」，会把
-                // 「200 渲染的登录页」当成有效会话放行，随后 fetchAndParse 又被同一守卫判
-                // SessionExpired 而降级 → 姓名退化「同学」。两处现在同判定，不再撕裂。
-                JwcResponseGuard.readJwcHtml(resp, "用户首页返回空响应")
-                true
+                // readJwcHtml 会把「200 实为登录页 / 跳 CAS / 跳 SSO 重登页 / jwc 5xx」全部抛成 JwcException。
+                val html = JwcResponseGuard.readJwcHtml(resp, "用户首页返回空响应")
+                SessionProbe.Valid(html)
             }
-        }.getOrDefault(false)
+        } catch (e: JwcException) {
+            // 业务语义的失效（含 SessionExpired / EmptyResponse / Server 5xx / 异常重定向）→ 确证失效。
+            SessionProbe.Invalid
+        } catch (e: IOException) {
+            // 纯网络够不着 → 不知道会话死没死，交给上层决定是否乐观放行。
+            SessionProbe.Unreachable
+        }
     }
 
     /** 退出：清 cookie + 清存储；下一次访问需要重新登录。 */
@@ -170,23 +228,6 @@ class CasLoginClient(
         }
     }
 
-    internal companion object {
-        /**
-         * 从 CAS 登录页 HTML 中提取 `execution` 字段，提不到返回 null。Pure function，便于单测。
-         *
-         * 兼容两种渲染：
-         *  - 传统 CAS 表单：`<input type="hidden" name="execution" value="e1s1">`
-         *  - Vue 单页（江西师大现行版）：内联 JS 里 `execution: "..."` 或 `"execution":"..."`
-         */
-        internal fun parseExecutionFromHtml(html: String): String? {
-            val doc = Jsoup.parse(html)
-            doc.selectFirst("input[name=execution]")?.attr("value")?.takeIf { it.isNotEmpty() }
-                ?.let { return it }
-            val regex = Regex("""["']?execution["']?\s*[:=]\s*["']([^"']+)["']""")
-            return regex.find(html)?.groupValues?.get(1)
-        }
-    }
-
     @Throws(IOException::class)
     private fun fetchPublicKey(): String {
         val req = Request.Builder()
@@ -204,29 +245,70 @@ class CasLoginClient(
         }
     }
 
-    private fun parseCasError(html: String): String? {
-        if (html.isBlank()) return null
-        val doc = Jsoup.parse(html)
-        // CAS 错误通常落在 .alert / .error-msg / [data-v-*].msg 之类的节点
-        val candidates = listOf(
-            "div.alert-danger",
-            "div.error-msg",
-            "div.errors",
-            "div[class*=error]",
-            "p.error",
-            "span.error",
-        )
-        for (sel in candidates) {
-            val text = doc.selectFirst(sel)?.text()?.trim()
-            if (!text.isNullOrEmpty()) return text
+    internal companion object {
+        /**
+         * 从 CAS 登录页 HTML 中提取 `execution` 字段，提不到返回 null。Pure function，便于单测。
+         *
+         * 兼容两种渲染：
+         *  - 传统 CAS 表单：`<input type="hidden" name="execution" value="e1s1">`
+         *  - Vue 单页（江西师大现行版）：内联 JS 里 `execution: "..."` 或 `"execution":"..."`
+         */
+        internal fun parseExecutionFromHtml(html: String): String? {
+            val doc = Jsoup.parse(html)
+            doc.selectFirst("input[name=execution]")?.attr("value")?.takeIf { it.isNotEmpty() }
+                ?.let { return it }
+            val regex = Regex("""["']?execution["']?\s*[:=]\s*["']([^"']+)["']""")
+            return regex.find(html)?.groupValues?.get(1)
         }
-        // 江西师大 CAS 用 Vue 渲染错误提示，可能藏在 data-* 或 JS 里。
-        // 旧 regex 还匹配了 `msg` / `message` 这种通用字段名，CAS 错误页之外的 CSS/JS 也会撞到，
-        // 容易把无关字符串当成"错误信息"展示。这里收紧到 CAS 真正用的 errorMsg / errorMessage / errMsg。
-        val jsErr = Regex("""\b(?:errorMsg|errorMessage|errMsg)\s*[:=]\s*["']([^"']{4,80})["']""")
-            .find(html)?.groupValues?.get(1)
-        if (!jsErr.isNullOrEmpty()) return jsErr
-        return null
+
+        /**
+         * 把「POST 后落回 /cas/login」的 body 分类为 [Result]。**白名单降级**：
+         *
+         *  - 默认（含错误文案抓不到 / 江西师大 Vue 版常抓不到文案）→ [Result.InvalidCredentials]
+         *    清凭证。这是安全默认：旧密码 / 改过的密码反复打 CAS 会把账号打锁，宁可让用户手动重登。
+         *  - **仅当**明确嗅探到「验证码 / 滑块 / 系统繁忙 / 频繁 / 稍后再试」这类**环境性**拒绝时
+         *    → [Result.Transient] 保留凭证：这不是密码错，是此刻登录不了，稍后能自愈。
+         *
+         * 注意本 app 登录页没有验证码输入 UI（captcha 恒为空串），所以「需验证码」对手动登录同样
+         * 无法满足——把它归 Transient 只是为了**不误清正确密码**，靠 throttle 退避避免风暴，并不指望自愈。
+         *
+         * Pure function，便于单测。
+         */
+        internal fun classifyCasRejection(body: String): Result {
+            val text = runCatching { Jsoup.parse(body).text() }.getOrDefault(body)
+            val hitEnvironmental = CAS_ENVIRONMENTAL_MARKERS.any { it in text }
+            return if (hitEnvironmental) {
+                Result.Transient("登录暂时受限（需验证码或稍后重试）")
+            } else {
+                Result.InvalidCredentials(extractCasErrorText(body) ?: "账号或密码错误，请重新登录")
+            }
+        }
+
+        /** 从 CAS 登录页 HTML 抽人类可读错误文案（供 InvalidCredentials 展示）；抓不到返回 null。 */
+        private fun extractCasErrorText(html: String): String? {
+            if (html.isBlank()) return null
+            val doc = runCatching { Jsoup.parse(html) }.getOrNull() ?: return null
+            val candidates = listOf(
+                "div.alert-danger", "div.error-msg", "div.errors",
+                "div[class*=error]", "p.error", "span.error",
+            )
+            for (sel in candidates) {
+                val t = doc.selectFirst(sel)?.text()?.trim()
+                if (!t.isNullOrEmpty()) return t
+            }
+            return Regex("""\b(?:errorMsg|errorMessage|errMsg)\s*[:=]\s*["']([^"']{4,80})["']""")
+                .find(html)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }
+        }
+
+        /**
+         * 「环境性拒绝」白名单标记：命中任一即认定不是密码错、而是此刻登录不了，保留凭证。
+         * 只收对「密码是否正确」中立的词——绝不含「密码 / 账号」等可能真表示凭证错的词。
+         */
+        private val CAS_ENVIRONMENTAL_MARKERS = listOf(
+            "验证码", "captcha", "滑块", "拖动", "拼图",
+            "系统繁忙", "稍后", "稍候", "频繁", "过于频繁",
+            "请重试", "请稍后再试", "服务繁忙", "访问过快",
+        )
     }
 
     private fun formatException(t: Throwable): String = when (t) {

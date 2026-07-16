@@ -22,8 +22,14 @@ class ScheduleRepository(
     @Volatile
     private var cached: SchedulePage.Parsed? = null
 
-    /** 学期 value → 已加载好的解析结果。切学期时缓存历史结果，再切回去不需要重新 POST。 */
-    private val cachedBySemester = mutableMapOf<String, SchedulePage.Parsed>()
+    /**
+     * 学期 value → 已加载好的解析结果。切学期时缓存历史结果，再切回去不需要重新 POST。
+     *
+     * 用 [java.util.concurrent.ConcurrentHashMap]（而非普通 map + mutex）：绝大多数读写仍在 [mutex]
+     * 内串行，但 [clearCache] 需要**不经 mutex**地清空（避免 repo.mutex ⇄ authMutex 跨锁死锁，
+     * 见 [clearCache] 注释），ConcurrentHashMap 让那次并发 clear 不会撞坏正在 mutex 内进行的读写结构。
+     */
+    private val cachedBySemester = java.util.concurrent.ConcurrentHashMap<String, SchedulePage.Parsed>()
 
     /** 当前选中的学期 [SchedulePage.SemesterOption.value]；初值在 [ensureLoaded] 后填入。 */
     @Volatile
@@ -261,16 +267,20 @@ class ScheduleRepository(
     /** 当前已加载学期的开学日；UI 用来把 `(week, weekday)` 反算成日期。 */
     fun currentSemesterStart(): java.time.LocalDate? = cached?.semesterStart
 
-    /** 退出登录时清空所有内存 + 派生状态；下一用户登录后看到的是从零开始的视图。 */
-    suspend fun clearCache() {
-        mutex.withLock {
-            cached = null
-            cachedBySemester.clear()
-            selectedSemesterValue = null
-        }
-        enrichMutex.withLock {
-            creditMap = null
-        }
+    /**
+     * 退出登录时清空所有内存 + 派生状态；下一用户登录后看到的是从零开始的视图。
+     *
+     * **无锁、非 suspend**：直接置 `@Volatile` 标量为 null + 清 ConcurrentHashMap。绝不能 `mutex.withLock` ——
+     * 本方法经 `AuthRepository.clearRepositoryCaches` 在**持有 authMutex 时**调用，而 `ensureLoaded`/
+     * `selectSemester`/`refresh` 持有本类 mutex 期间会经 `getHtmlAuth` → reauth 去抢 authMutex；两者一旦
+     * 都加锁就构成 `repo.mutex ⇄ authMutex` 跨锁死锁环。无锁清空最差只是与一次并发加载的良性竞态
+     * （可能残留刚加载的一份），下次 refresh 自愈；跨账号安全由「登录成功后的换号检测 + 清空」兜底。
+     */
+    fun clearCache() {
+        cached = null
+        selectedSemesterValue = null
+        cachedBySemester.clear()
+        creditMap = null
     }
 
     companion object {

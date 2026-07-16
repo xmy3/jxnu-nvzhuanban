@@ -34,8 +34,15 @@ class GradeRepository {
         fetchNow().also { cached = it }
     }
 
-    /** 退出登录时清空内存缓存，避免下一用户登录后看到上一用户的成绩。 */
-    suspend fun clearCache() = mutex.withLock {
+    /**
+     * 退出登录时清空内存缓存，避免下一用户登录后看到上一用户的成绩。
+     *
+     * **故意无锁**：`cached` 是 `@Volatile`，直接置 null 即可。绝不能 `mutex.withLock` ——
+     * 本方法经 `AuthRepository.clearRepositoryCaches` 在**持有 authMutex 时**调用，而业务 `fetchAll`
+     * 持有本类 mutex 期间会经 `getHtmlAuth` → reauth 去抢 authMutex；两者一旦加锁就构成
+     * `repo.mutex ⇄ authMutex` 跨锁死锁环。无锁清空最差只是一次过期数据被读到，下次 refresh 自愈。
+     */
+    fun clearCache() {
         cached = null
     }
 

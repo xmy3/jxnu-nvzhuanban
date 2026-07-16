@@ -2,6 +2,7 @@ package cn.jxnu.nvzhuanban.data.network
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -82,5 +83,47 @@ class CasLoginClientParseTest {
             </body></html>
         """.trimIndent()
         assertNull(CasLoginClient.parseExecutionFromHtml(html))
+    }
+
+    // ---- classifyCasRejection：白名单降级（防改密码 fail-open / 防误清正确密码）----
+
+    @Test
+    fun `unrecognized rejection defaults to InvalidCredentials (clears creds)`() {
+        // 江西师大 Vue 版 CAS 常常抓不到错误文案 → 必须默认认定凭证失效清密码，
+        // 否则改过密码的用户会拿旧密码反复打 CAS 把账号锁死（fail-open 回归）。
+        val body = "<html><body><div id=\"app\"></div></body></html>"
+        val r = CasLoginClient.classifyCasRejection(body)
+        assertTrue(r is CasLoginClient.Result.InvalidCredentials)
+    }
+
+    @Test
+    fun `explicit wrong-password text is InvalidCredentials`() {
+        val body = """<html><body><div class="alert-danger">用户名或密码错误</div></body></html>"""
+        val r = CasLoginClient.classifyCasRejection(body)
+        assertTrue(r is CasLoginClient.Result.InvalidCredentials)
+        assertEquals("用户名或密码错误", (r as CasLoginClient.Result.InvalidCredentials).message)
+    }
+
+    @Test
+    fun `captcha requirement is Transient (keeps creds)`() {
+        // 需验证码是环境性拒绝（高频登录触发风控），不是密码错——保留凭证，靠 throttle 退避。
+        val body = """<html><body><div class="error-msg">请输入验证码后重试</div></body></html>"""
+        val r = CasLoginClient.classifyCasRejection(body)
+        assertTrue(r is CasLoginClient.Result.Transient)
+    }
+
+    @Test
+    fun `rate-limit busy text is Transient (keeps creds)`() {
+        val body = """<html><body><p class="error">系统繁忙，请稍后再试</p></body></html>"""
+        val r = CasLoginClient.classifyCasRejection(body)
+        assertTrue(r is CasLoginClient.Result.Transient)
+    }
+
+    @Test
+    fun `account locked text is InvalidCredentials`() {
+        // 账号锁定/冻结不含环境性白名单词 → 默认 InvalidCredentials 清凭证（旧密码继续试只会更糟）。
+        val body = """<html><body><div class="alert-danger">账号已被锁定</div></body></html>"""
+        val r = CasLoginClient.classifyCasRejection(body)
+        assertTrue(r is CasLoginClient.Result.InvalidCredentials)
     }
 }

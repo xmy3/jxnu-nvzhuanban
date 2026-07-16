@@ -166,6 +166,21 @@ class PersistentCookieJar internal constructor(filesDir: File) : CookieJar {
         return loadForRequest(probeUrl).isNotEmpty()
     }
 
+    /**
+     * 本地是否还留着 CAS 的票据授予凭证（TGC / CASTGC，通常 `path=/cas`）。
+     *
+     * 用来决定「免密 SSO 续票」值不值得一试：TGC 在（可能仍有效）才 GET 一次 `/cas/login`
+     * 让 CAS 用它换新的 jwc 会话；TGC 根本不在（登录起手 clearForHost 清过、或从没登录过）就
+     * 直接跳过这一步，省掉一次注定 302 回登录表单的无谓请求。probe url 用 `/cas/login` 覆盖
+     * `path=/cas` 的 TGC。
+     */
+    fun hasCasTgc(): Boolean {
+        val probeUrl = "https://${JxnuUrls.CAS_HOST}/cas/login".toHttpUrl()
+        return loadForRequest(probeUrl).any {
+            it.name.equals("TGC", ignoreCase = true) || it.name.equals("CASTGC", ignoreCase = true)
+        }
+    }
+
     private fun loadFromDisk() {
         if (!cookieFile.exists()) return
         runCatching {

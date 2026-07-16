@@ -107,6 +107,27 @@ class PersistentCookieJarStoreTest {
     }
 
     @Test
+    fun `hasCasTgc detects TGC on cas login path`() {
+        val jar = newJar()
+        assertFalse(jar.hasCasTgc())
+        // TGC 种在 uis 域、path=/cas —— SSO 免密续票就靠它判断值不值得一试
+        val casUrl = "https://uis.jxnu.edu.cn/cas/login".toHttpUrl()
+        jar.saveFromResponse(
+            casUrl,
+            listOf(sessionCookie(name = "TGC", value = "TGT-xxx", host = "uis.jxnu.edu.cn", path = "/cas")),
+        )
+        assertTrue(jar.hasCasTgc())
+    }
+
+    @Test
+    fun `hasCasTgc false when only jwc session present`() {
+        val jar = newJar()
+        jar.saveFromResponse(jwcUrl, listOf(sessionCookie()))
+        // 只有 jwc 业务 session、没有 CAS TGC → 不该误报可续票
+        assertFalse(jar.hasCasTgc())
+    }
+
+    @Test
     fun `persists to disk and a fresh jar loads it back`() {
         val jar1 = newJar()
         jar1.saveFromResponse(jwcUrl, listOf(sessionCookie(value = "persisted")))

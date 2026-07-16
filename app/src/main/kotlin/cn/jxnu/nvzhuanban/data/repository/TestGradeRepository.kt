@@ -28,8 +28,8 @@ class TestGradeRepository {
         fetchNow().also { cached = it }
     }
 
-    /** 退出登录时清空内存缓存。 */
-    suspend fun clearCache() = mutex.withLock {
+    /** 退出登录时清空内存缓存。**无锁**（`@Volatile cached`），避免 repo.mutex ⇄ authMutex 跨锁死锁——见 GradeRepository.clearCache。 */
+    fun clearCache() {
         cached = null
     }
 

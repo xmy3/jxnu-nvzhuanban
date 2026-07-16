@@ -9,6 +9,7 @@ import cn.jxnu.nvzhuanban.data.model.hasPlaceholderName
 import cn.jxnu.nvzhuanban.data.network.AuthStorage
 import cn.jxnu.nvzhuanban.data.network.CasLoginClient
 import cn.jxnu.nvzhuanban.data.network.JxnuHttpClient
+import cn.jxnu.nvzhuanban.data.network.ReauthOutcome
 import cn.jxnu.nvzhuanban.data.network.SecureCredentialStore
 import cn.jxnu.nvzhuanban.data.network.pages.UserDefaultPage
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
@@ -29,16 +30,24 @@ import kotlinx.coroutines.withContext
 /**
  * 登录态仓库（Phase 3：免登录）。
  *
- * 状态恢复优先级：
- *  1. 仍有效的 cookie → 直接 LoggedIn（快，~100ms）
- *  2. cookie 失效但有保存的凭证 → 静默重登录 → LoggedIn
- *  3. 都没有 → LoggedOut，跳登录页
+ * 状态恢复优先级（[tryRestoreSession]）：
+ *  1. 仍有效的 cookie（probeSession=Valid）→ 直接 LoggedIn（快，~100ms，复用 probe 拿到的首页 HTML）
+ *  2. cookie 失效（Invalid）但有保存的凭证 → 静默重登（SSO 续票 → 账密登录）→ LoggedIn
+ *  3. 网络够不着（Unreachable）但有凭证 → **乐观放行**：降级 profile 直接 LoggedIn，课表走 widget
+ *     快照离线兜底，姓名/学院信息进主界面后自愈；网络恢复后业务请求自然 reauth
+ *  4. 无凭证 / CAS 明确拒绝 → LoggedOut / 登录页
+ *
+ * 会话恢复统一走 [reauthLadder]：先免密 SSO 续票（本地 TGC 有效时不打密码），失败再完整账密登录。
+ * 只有账密这一步受 [autoLoginThrottle] 保护——高频同账号密码 POST 才会刺激 CAS 风控。
+ *
+ * 运行中的静默重登（[tryReauthSilently]）返回 [ReauthOutcome] 三态：Success 重放 / AuthRejected 踢登录页 /
+ * Transient 不踢人稍后重试。并发请求同时过期时靠进锁 double-check 会话真正合并为一次登录。
  *
  * 凭证存储：用户勾"记住账号"时，密码会被 [SecureCredentialStore] 加密（Android Keystore 硬件密钥）
  * 持久化。仅本机解密，卸载即销毁。
  *
- * [authMutex] 把 [login] / [tryRestoreSession] / [logout] / [expireSession] 串行化：
- * 防止冷启动时用户手敲登录与 tryRestoreSession 并发执行 CAS 登录（两条 clearForHost + login
+ * [authMutex] 把 [login] / [tryRestoreSession] / [logout] / [expireSession] / [tryReauthSilently]
+ * 串行化：防止冷启动时用户手敲登录与 tryRestoreSession 并发执行 CAS 登录（两条 clearForHost + login
  * 会把 cookie jar 推到半填半清状态、_state 闪烁 LoggedIn → Error → LoggedIn）。
  */
 class AuthRepository private constructor(
@@ -58,8 +67,8 @@ class AuthRepository private constructor(
      * [tryReauthSilently]）受指数退避保护：避免本地保存的旧密码反复打 CAS 把账号锁死。
      *
      * 触发场景：用户在网页端改了密码 / 学校强制改密 / CAS 临时拒绝 → 旧凭证不再可用。
-     * 第一次失败如果 [CasLoginClient.Result.Failure.isAuth] 为 true，凭证已被清掉，
-     * 不会再有第二次。但 isAuth=false 的瞬时失败（网络抖动 / 5xx）凭证保留，下次冷启动
+     * 第一次失败若判 [CasLoginClient.Result.InvalidCredentials]，凭证已被清掉，不会再有第二次。
+     * 但 [CasLoginClient.Result.Transient]（网络抖动 / 5xx / 需验证码）凭证保留，下次冷启动
      * 还会重试 —— 这里的节流就是兜底这条路径。
      */
     private val autoLoginThrottle = AutoLoginThrottle()
@@ -74,14 +83,32 @@ class AuthRepository private constructor(
                 autoLoginThrottle.recordSuccess()
                 onLoginSuccess(username.trim(), password)
             }
-            is CasLoginClient.Result.Failure -> {
+            is CasLoginClient.Result.InvalidCredentials -> {
                 // 手动登录失败不阻挡用户重试，但**也算进自动通道的失败计数**：
                 // 否则用户在登录页连点 5 次错密码，下次冷启动 silent retry 仍会无脑试一次。
                 autoLoginThrottle.recordFailure()
                 _state.value = AuthState.Error(r.message)
                 throw LoginException(r.message)
             }
+            is CasLoginClient.Result.Transient -> {
+                // 网络 / 环境性失败：同样计入失败计数（防连点风暴），但文案是「稍后重试」而非「密码错」。
+                autoLoginThrottle.recordFailure()
+                _state.value = AuthState.Error(r.message)
+                throw LoginException(r.message)
+            }
         }
+    }
+
+    /**
+     * 登录页「使用已保存的密码登录」入口：从 [SecureCredentialStore] 载出密码，走**手动登录通道**
+     * （[login]，驱动 _state=Loading/LoggedIn、不受 [autoLoginThrottle] 冷却阻挡、成功重置计数）。
+     * 绝不走 [tryReauthSilently]——那是自动通道，受节流、不改 _state，用户点了可能「没反应」。
+     *
+     * 没有可用凭证（极少见：并发被清）时抛 [LoginException]，让 UI 提示改用手输。
+     */
+    suspend fun loginWithSavedCredentials() {
+        val saved = creds.load() ?: throw LoginException("本机没有已保存的密码，请手动登录")
+        login(saved.username, saved.password)
     }
 
     private suspend fun onLoginSuccess(username: String, password: String) {
@@ -140,52 +167,72 @@ class AuthRepository private constructor(
      * 调用方式（NvzhuanbanApp）：异步发起，UI 在 splash 屏等结果。
      */
     suspend fun tryRestoreSession(): Boolean = authMutex.withLock {
-        // 优先走 cookie，快
-        if (cas.validateSession()) {
-            // 即使本地没保存学号（rememberMe=false 的老用户），也能从 /User/Default.aspx 的
-            // lblUserInfor 里把学号 + 姓名解出来 —— 没必要因此把人踢回登录页。
-            val username = storage.lastUsername
-                ?: creds.load()?.username
-                ?: ""
-            val profile = runCatching { UserDefaultPage.fetchAndParse(username) }
-                .getOrNull()
-                ?: UserDefaultPage.parse(username, "")
-            // 解析失败（极端情况：HTML 结构变了）连学号都没有 → 视为未登录，强制重登
-            if (profile.studentId.isBlank()) return@withLock false
-            // cookie 直连路径同样要记录/比对「上一个登录用户」——否则一直靠 cookie 续命的
-            // 存量用户 lastLoggedUser 永远是 null，换号检测失效。JXNU 的 CAS 登录名就是
-            // 学号，与 onLoginSuccess 记录的 username 同一口径。
-            val previousUser = storage.lastLoggedUser
-            if (previousUser != null && previousUser != profile.studentId) {
-                withContext(Dispatchers.IO) { clearAllUserDataOnSignOut() }
+        // 优先走 cookie，快。三态探测区分「有效 / 确证失效 / 网络够不着」。
+        when (val probe = cas.probeSession()) {
+            is CasLoginClient.SessionProbe.Valid -> {
+                // probe 已经把 /User/Default.aspx 的 HTML 取回来了，直接解析，省掉紧接着的第二次 GET。
+                return@withLock finishRestoreFromValidHtml(probe.html)
             }
-            storage.lastLoggedUser = profile.studentId
-            // cookie 直接有效本身就是"自动通道成功"，重置 throttle
-            autoLoginThrottle.recordSuccess()
-            _state.value = AuthState.LoggedIn(profile)
-            return@withLock true
+            CasLoginClient.SessionProbe.Unreachable -> {
+                // 网络够不着但本地有可用凭证 → **乐观放行**：先进主界面（课表走 widget 快照离线兜底、
+                // ProfileViewModel 姓名自愈），后台会话稍后由业务请求自然触发 reauth。
+                // 只认真正保存的密码（creds），绝不用 lastUsername/lastLoggedUser——那会把「已登出但网络差」
+                // 的用户静默登回去。乐观放行**不写 lastLoggedUser**（没发生过验证登录，无权动换号锚点）。
+                val saved = creds.load() ?: return@withLock false
+                _state.value = AuthState.LoggedIn(degradedProfile(saved.username))
+                return@withLock true
+            }
+            CasLoginClient.SessionProbe.Invalid -> Unit // 落到下面的凭证重登
         }
-        // cookie 失效，尝试用保存的凭证静默重登
+        // cookie 确证失效，尝试用保存的凭证静默重登
         val saved = creds.load() ?: return@withLock false
         // 自动通道节流：上次失败后还在冷却窗口内则跳过，避免旧密码反复打 CAS。
-        // 用户可手动从登录页登录（不受 throttle 限制）。
+        // 冷启动 throttle 已随进程重置，所以正常冷启动不会被拦；用户可手动登录（不受 throttle 限制）。
         if (autoLoginThrottle.shouldSkip()) return@withLock false
-        when (val r = cas.login(saved.username, saved.password)) {
-            is CasLoginClient.Result.Success -> {
+        when (reauthLadder(saved.username, saved.password)) {
+            CasLoginClient.Result.Success -> {
                 autoLoginThrottle.recordSuccess()
                 onLoginSuccess(saved.username, saved.password)
                 true
             }
-            is CasLoginClient.Result.Failure -> {
+            is CasLoginClient.Result.InvalidCredentials -> {
+                // CAS 明确拒绝（密码已改、账号冻结等）→ 清凭证，避免下次再用过期密码反复试。
                 autoLoginThrottle.recordFailure()
-                // 仅当 CAS 明确拒绝认证（密码已改、账号冻结等）时才清凭证；
-                // 网络异常 / 教务系统维护 / TLS 失败等瞬时错误保留凭证，下次启动再试 —
-                // 用户切到差网络偶尔启动一次不应该丢密码。
-                if (r.isAuth) creds.clear()
+                creds.clear()
                 false
+            }
+            is CasLoginClient.Result.Transient -> {
+                // 瞬时失败（网络/环境）：保留凭证。有凭证 → 同样乐观放行（离线兜底），别把只是没网的用户
+                // 挡在登录页手输密码。降级 profile 不写 lastLoggedUser。
+                autoLoginThrottle.recordFailure()
+                _state.value = AuthState.LoggedIn(degradedProfile(saved.username))
+                true
             }
         }
     }
+
+    /** [CasLoginClient.SessionProbe.Valid] 分支：用 probe 拿到的首页 HTML 完成恢复，不再重复 GET。 */
+    private suspend fun finishRestoreFromValidHtml(html: String): Boolean {
+        // 即使本地没保存学号（rememberMe=false 的老用户），也能从 lblUserInfor 把学号 + 姓名解出来。
+        val username = storage.lastUsername ?: creds.load()?.username ?: ""
+        val profile = UserDefaultPage.parse(username, html)
+        // 解析失败（极端：HTML 结构变了）连学号都没有 → 视为未登录，强制重登
+        if (profile.studentId.isBlank()) return false
+        // cookie 直连路径同样要记录/比对「上一个登录用户」（存量靠 cookie 续命的用户 lastLoggedUser
+        // 会一直是 null，换号检测失效）。JXNU 的 CAS 登录名就是学号，与 onLoginSuccess 同口径。
+        val previousUser = storage.lastLoggedUser
+        if (previousUser != null && previousUser != profile.studentId) {
+            withContext(Dispatchers.IO) { clearAllUserDataOnSignOut() }
+        }
+        storage.lastLoggedUser = profile.studentId
+        // cookie 直接有效本身就是"自动通道成功"，重置 throttle
+        autoLoginThrottle.recordSuccess()
+        _state.value = AuthState.LoggedIn(profile)
+        return true
+    }
+
+    /** 乐观放行 / 瞬时失败时的降级 profile：只有学号（从本地凭证），姓名占位，进主界面后自愈。 */
+    private fun degradedProfile(username: String): UserProfile = UserDefaultPage.parse(username, "")
 
     suspend fun logout() = authMutex.withLock {
         cas.logout()
@@ -195,6 +242,10 @@ class AuthRepository private constructor(
     }
 
     suspend fun expireSession(message: String = "登录已过期，请重新登录") = authMutex.withLock {
+        // 误踢守卫：广播 notifyExpired 到 AppNav 消费之间，可能有另一路并发请求刚好把会话 reauth 成功了。
+        // 真去清 cookie / 踢登录页之前，先复验一次——会话其实还活着就直接放行（保住刚建立的新会话），
+        // 只在确证失效时才销毁。这挡住了「弱网下一个请求失败、把兄弟请求刚续上的会话连带清掉」的竞态。
+        if (cas.probeSession() is CasLoginClient.SessionProbe.Valid) return@withLock
         cas.logout()
         // 只清内存缓存（会话相关、可重新拉取），**不**清 CourseOverridesStore / 已读锚点 /
         // widget 快照这类同账号的本地数据 —— 会话过期是可自愈事件，预期同一用户马上重登
@@ -205,29 +256,52 @@ class AuthRepository private constructor(
     }
 
     /**
-     * 用本地保存的凭据**静默**重登。不修改 [_state]（用户视角看不到 Loading），
-     * 仅用来给业务请求做"过期 → 自动恢复"重放：
-     *  - 没保存凭据 / CAS 拒绝 / 网络失败 → 返回 false，调用方应让 SessionExpired 透传
-     *  - CAS 明确拒绝认证（[CasLoginClient.Result.Failure.isAuth]==true）→ 清掉凭据，避免下次再用过期密码反复试
+     * 用本地保存的凭据**静默**重登，返回 [ReauthOutcome] 三态。不修改 [_state]（用户视角看不到 Loading），
+     * 供业务请求做"过期 → 自动恢复"重放：
+     *  - [ReauthOutcome.Success]：会话已刷新（cookie double-check 命中，或 SSO 续票 / 账密登录成功）→ 重放。
+     *  - [ReauthOutcome.AuthRejected]：没保存凭据，或 CAS 明确拒绝（密码已改等，已清凭据）→ 踢登录页。
+     *  - [ReauthOutcome.Transient]：网络/环境性失败 or 被节流跳过 → 不踢人、稍后重试。
      *
-     * 与 [login] / [tryRestoreSession] / [logout] 共用 [authMutex] —— 已经在 logout 流程
-     * 中的请求不会再触发 reauth；已经在 login 中的请求不会被打断。
+     * **并发合并**靠进锁后先 double-check 会话：成绩/课表/通知/头像同时过期时，第一个真跑 [reauthLadder]，
+     * 其余进锁（[SessionRecovery.reauthMutex]）后 probeSession 已 Valid → 直接 Success 返回，不再各打一次 CAS。
+     *
+     * 与 [login] / [tryRestoreSession] / [logout] 共用 [authMutex]。
      */
-    suspend fun tryReauthSilently(): Boolean = authMutex.withLock {
-        val saved = creds.load() ?: return@withLock false
-        // 自动通道节流：与 tryRestoreSession 共享同一计数 / 冷却窗口
-        if (autoLoginThrottle.shouldSkip()) return@withLock false
-        when (val r = cas.login(saved.username, saved.password)) {
-            is CasLoginClient.Result.Success -> {
+    suspend fun tryReauthSilently(): ReauthOutcome = authMutex.withLock {
+        // 并发合并：若别的 reauth 已经把会话续上了，直接成功返回，不再重复登录。
+        // （SessionRecovery.reauthMutex 已把并发 reauth 串行化，这里是串行队列里每个人的进锁复验。）
+        if (cas.probeSession() is CasLoginClient.SessionProbe.Valid) return@withLock ReauthOutcome.Success
+        val saved = creds.load() ?: return@withLock ReauthOutcome.AuthRejected
+        // 自动通道节流：冷却窗口内不再打 CAS。归 Transient（不踢人）而非 AuthRejected——
+        // 凭证多半仍有效，只是此刻不宜重试，等冷却过或用户手动登录即可恢复。
+        if (autoLoginThrottle.shouldSkip()) return@withLock ReauthOutcome.Transient
+        when (reauthLadder(saved.username, saved.password)) {
+            CasLoginClient.Result.Success -> {
                 autoLoginThrottle.recordSuccess()
-                true
+                ReauthOutcome.Success
             }
-            is CasLoginClient.Result.Failure -> {
+            is CasLoginClient.Result.InvalidCredentials -> {
                 autoLoginThrottle.recordFailure()
-                if (r.isAuth) creds.clear()
-                false
+                creds.clear()
+                ReauthOutcome.AuthRejected
+            }
+            is CasLoginClient.Result.Transient -> {
+                autoLoginThrottle.recordFailure()
+                ReauthOutcome.Transient
             }
         }
+    }
+
+    /**
+     * 会话恢复的阶梯：先试免密 SSO 续票（本地 TGC 仍有效时秒续、不打密码、不刺激 CAS 风控），
+     * 失败再退回完整账密登录。**只有账密这一步**会真正提交密码、才受风控影响，SSO 续票不算。
+     *
+     * 必须在持有 [authMutex] 时调用；两步都走 raw 路径（[CasLoginClient.tryRefreshViaSso] /
+     * [CasLoginClient.login] 内部均不经 *Auth），不会重入 [SessionRecovery]。
+     */
+    private suspend fun reauthLadder(username: String, password: String): CasLoginClient.Result {
+        if (cas.tryRefreshViaSso()) return CasLoginClient.Result.Success
+        return cas.login(username, password)
     }
 
     /**

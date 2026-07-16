@@ -40,7 +40,8 @@ class StudentRepository {
         StudentSearchPage.parse(html).also { donor = it }
     }
 
-    suspend fun clearCache() = mutex.withLock {
+    /** 退出登录时清空 donor。**无锁**（`@Volatile donor`），避免 repo.mutex ⇄ authMutex 跨锁死锁——见 GradeRepository.clearCache。 */
+    fun clearCache() {
         donor = null
     }
 

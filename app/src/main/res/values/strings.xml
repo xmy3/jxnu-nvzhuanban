@@ -13,6 +13,7 @@
     <string name="login_password">统一身份认证密码</string>
     <string name="login_button">登 录</string>
     <string name="login_button_loading">登录中…</string>
+    <string name="login_button_saved">使用已保存的密码登录</string>
     <string name="login_remember">下次自动登录</string>
     <string name="login_help">使用帮助</string>
     <string name="login_dev_hint">使用前请确认网络畅通</string>

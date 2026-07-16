@@ -41,8 +41,8 @@ class TeacherRepository {
         TeacherSearchPage.parse(html).also { donor = it }
     }
 
-    /** 退出登录时清空 donor，下一次搜索会重新 GET seed。 */
-    suspend fun clearCache() = mutex.withLock {
+    /** 退出登录时清空 donor，下一次搜索会重新 GET seed。**无锁**（`@Volatile donor`），避免 repo.mutex ⇄ authMutex 跨锁死锁——见 GradeRepository.clearCache。 */
+    fun clearCache() {
         donor = null
     }
 
