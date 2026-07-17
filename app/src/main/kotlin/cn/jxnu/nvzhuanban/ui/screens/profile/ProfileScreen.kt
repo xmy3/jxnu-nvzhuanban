@@ -50,6 +50,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -79,6 +80,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -97,8 +99,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.jxnu.nvzhuanban.R
 import cn.jxnu.nvzhuanban.data.model.AppRelease
+import cn.jxnu.nvzhuanban.data.model.Exam
+import cn.jxnu.nvzhuanban.data.model.ExamStatus
 import cn.jxnu.nvzhuanban.data.model.UserProfile
 import cn.jxnu.nvzhuanban.data.model.formatCredit
+import cn.jxnu.nvzhuanban.data.repository.ExamRepository
+import cn.jxnu.nvzhuanban.data.repository.GraduationAuditRepository
 import cn.jxnu.nvzhuanban.data.storage.AvatarPrefs
 import cn.jxnu.nvzhuanban.data.storage.ThemeMode
 import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
@@ -114,6 +120,7 @@ import cn.jxnu.nvzhuanban.ui.widget.pinnedTodayScheduleWidgetCount
 import cn.jxnu.nvzhuanban.ui.widget.requestPinTodayScheduleWidget
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.time.LocalDateTime
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -172,14 +179,21 @@ fun ProfileScreen(
         }
     }
 
+    // 大标题随滚动折叠：展开时「我的」是大字号页头，上滑内容时收缩成常规 TopAppBar。
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            TopAppBar(
+            LargeTopAppBar(
                 title = { Text(stringResource(R.string.profile_title)) },
                 actions = {
                     RefreshIconButton(isRefreshing = isRefreshing, onClick = viewModel::refresh)
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+                scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.largeTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surface,
+                ),
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -208,14 +222,14 @@ fun ProfileScreen(
                 item {
                     GradesEntryCard(
                         cumulativeCredits = data.user.cumulativeCredits,
-                        onClick = onOpenGrades,
+                        onOpenGrades = onOpenGrades,
+                        onOpenExams = onOpenExams,
+                        onOpenTrainingPlan = onOpenTrainingPlan,
                     )
                 }
                 item {
                     ToolsBlock(
-                        onOpenExams = onOpenExams,
                         onOpenClassroom = onOpenClassroom,
-                        onOpenTrainingPlan = onOpenTrainingPlan,
                         onOpenPeopleSearch = onOpenPeopleSearch,
                         onOpenCalendar = onOpenCalendar,
                         onOpenTheme = { showThemeDialog = true },
@@ -433,65 +447,105 @@ private fun UserCard(
 @Composable
 private fun GradesEntryCard(
     cumulativeCredits: Float,
+    onOpenGrades: () -> Unit,
+    onOpenExams: () -> Unit,
+    onOpenTrainingPlan: () -> Unit,
+) {
+    // 成绩独占大卡改为三格数据摘要条：一屏内直接给出关键数字而不只是入口。
+    // 毕业最低学分 / 考试数据 best-effort 复用各 Repository 内存缓存（进过对应页即命中，
+    // 0 网络），失败静默显示「—」不打扰——同 UpcomingExamBanner 的设计取舍。
+    var minimumCredits by remember { mutableStateOf<Float?>(null) }
+    var exams by remember { mutableStateOf<List<Exam>?>(null) }
+    LaunchedEffect(Unit) {
+        minimumCredits = runCatching {
+            GraduationAuditRepository.instance.fetch().minimumCredits
+        }.getOrNull()
+    }
+    LaunchedEffect(Unit) {
+        exams = runCatching { ExamRepository.instance.fetchAll() }.getOrNull()
+    }
+    val now = remember { LocalDateTime.now() }
+    val nearestDays: Long? = remember(exams, now) {
+        exams?.asSequence()
+            ?.filter { it.statusAt(now) != ExamStatus.FINISHED }
+            ?.map { it.daysLeftFrom(now) }
+            ?.filter { it >= 0L }
+            ?.minOrNull()
+    }
+
+    // 动画状态必须无条件持有：若放进 if(>0) 分支，enrich 首次把学分从 0 填成
+    // 正值时动画才首次组合、首帧直接落在真值，根本不会滚动。这里用 started 标志
+    // 钉住首帧为 0，冷启动缓存命中（进屏就有值）也能播一次进场滚动。
+    var creditsStarted by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { creditsStarted = true }
+    val animatedCredits by animateFloatAsState(
+        targetValue = if (creditsStarted) cumulativeCredits else 0f,
+        animationSpec = tween(durationMillis = 700),
+        label = "credits",
+    )
+
+    val progressPercent: Int? = minimumCredits
+        ?.takeIf { it > 0f && cumulativeCredits > 0f }
+        ?.let { ((cumulativeCredits / it) * 100).toInt().coerceIn(0, 100) }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        StatTile(
+            value = if (cumulativeCredits > 0f) animatedCredits.formatCredit() else "—",
+            label = "已修学分",
+            modifier = Modifier.weight(1f),
+            onClick = onOpenGrades,
+        )
+        StatTile(
+            value = progressPercent?.let { "$it%" } ?: "—",
+            label = "毕业进度",
+            modifier = Modifier.weight(1f),
+            onClick = onOpenTrainingPlan,
+        )
+        StatTile(
+            value = when (nearestDays) {
+                null -> "—"
+                0L -> "今天"
+                else -> "$nearestDays 天"
+            },
+            label = if (nearestDays != null) "距下场考试" else "暂无待考",
+            modifier = Modifier.weight(1f),
+            onClick = onOpenExams,
+        )
+    }
+}
+
+@Composable
+private fun StatTile(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    // 成绩从底栏挪到这里。位置紧贴 UserCard，独占一张 Card —— 视觉上比 ToolsBlock 的小 row
-    // 重得多，方便用户一眼看到入口。副标题展示已修学分（cumulativeCredits 由
-    // ProfileViewModel.enrichFromGrades 后台从成绩页填上，未到时 fallback 到提示文字）。
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
+        modifier = modifier.clickable(onClick = onClick),
         shape = AppShape.card,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(vertical = 14.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(
-                imageVector = Icons.Outlined.School,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size(28.dp),
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
             )
-            Spacer(Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.grades_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-                // 动画状态必须无条件持有：若放进 if(>0) 分支，enrich 首次把学分从 0 填成
-                // 正值时动画才首次组合、首帧直接落在真值，根本不会滚动。这里用 started 标志
-                // 钉住首帧为 0，冷启动缓存命中（进屏就有值）也能播一次进场滚动。
-                var creditsStarted by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) { creditsStarted = true }
-                val animatedCredits by animateFloatAsState(
-                    targetValue = if (creditsStarted) cumulativeCredits else 0f,
-                    animationSpec = tween(durationMillis = 700),
-                    label = "credits",
-                )
-                val subtitle = if (cumulativeCredits > 0f) {
-                    "已修 ${animatedCredits.formatCredit()} 学分"
-                } else {
-                    "查看历年成绩与标准分"
-                }
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
-                )
-            }
-            Icon(
-                imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size(22.dp),
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
         }
     }
@@ -499,17 +553,12 @@ private fun GradesEntryCard(
 
 @Composable
 private fun ToolsBlock(
-    onOpenExams: () -> Unit,
     onOpenClassroom: () -> Unit,
-    onOpenTrainingPlan: () -> Unit,
     onOpenPeopleSearch: () -> Unit,
     onOpenCalendar: () -> Unit,
     onOpenTheme: () -> Unit,
 ) {
-    // 二级功能集合：3 列 × 2 行图标网格，刚好把 6 个入口塞满，不用占位 Spacer。主题色从
-    // SettingsBlock 挪过来——它的点击行为是"打开选择 Dialog"，跟其他几个查询入口本质一样，
-    // 放一块更顺，也让 SettingsBlock 进一步瘦身。代价是丢了状态副标题（"跟随系统 · 品牌色"），
-    // 但 Dialog 打开后就能看到当前选中项。
+    // 二级功能集合：考试 / 培养方案已升级进上方数据摘要条，这里只剩 4 个入口，单行排满。
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = AppShape.card,
@@ -520,20 +569,8 @@ private fun ToolsBlock(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 12.dp),
-            maxItemsInEachRow = 3,
+            maxItemsInEachRow = 4,
         ) {
-            ToolTile(
-                icon = Icons.Outlined.Event,
-                title = stringResource(R.string.exams_title),
-                modifier = Modifier.weight(1f),
-                onClick = onOpenExams,
-            )
-            ToolTile(
-                icon = Icons.AutoMirrored.Outlined.ListAlt,
-                title = "培养方案",
-                modifier = Modifier.weight(1f),
-                onClick = onOpenTrainingPlan,
-            )
             ToolTile(
                 icon = Icons.Outlined.CalendarMonth,
                 title = stringResource(R.string.calendar_title),
