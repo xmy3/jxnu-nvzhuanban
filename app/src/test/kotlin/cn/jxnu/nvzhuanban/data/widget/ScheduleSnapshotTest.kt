@@ -96,6 +96,24 @@ class ScheduleSnapshotTest {
         assertEquals(restored.size, restored.map { it.id }.toSet().size)
     }
 
+    @Test
+    fun nextSemesterStartSurvivesJsonRoundTrip() {
+        val nextStart = LocalDate.of(2026, 9, 1)
+        val json = ScheduleSnapshot.fromCourses(
+            "2025-2026-2", 18, LocalDate.of(2026, 3, 2),
+            emptyList(), nextSemesterStart = nextStart,
+        ).toJson()
+        assertEquals(nextStart, ScheduleSnapshot.fromJson(json).nextSemesterStart)
+    }
+
+    @Test
+    fun nextSemesterStartIsNullWhenAbsent() {
+        // 未传（教务没放出下学期）与老格式 JSON（无该字段）都应回 null，不能抛
+        val json = ScheduleSnapshot.fromCourses("2025-2026-2", 18, LocalDate.of(2026, 3, 2), emptyList()).toJson()
+        assertEquals(null, ScheduleSnapshot.fromJson(json).nextSemesterStart)
+        assertEquals(null, ScheduleSnapshot.fromJson("""{"semester":"legacy"}""").nextSemesterStart)
+    }
+
     private fun course(name: String, weekday: Int, weeks: List<Int>) = SnapshotCourse(
         name = name,
         location = "N101",

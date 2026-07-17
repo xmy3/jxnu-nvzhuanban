@@ -30,6 +30,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import cn.jxnu.nvzhuanban.MainActivity
 import cn.jxnu.nvzhuanban.data.model.SectionTimetable
+import cn.jxnu.nvzhuanban.data.model.SemesterPhase
 import cn.jxnu.nvzhuanban.data.widget.ScheduleSnapshot
 import cn.jxnu.nvzhuanban.data.widget.SnapshotCourse
 import cn.jxnu.nvzhuanban.data.widget.WidgetSnapshotStore
@@ -38,6 +39,7 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 /**
  * 桌面小部件：今日课表 + 下一节倒计时。
@@ -109,10 +111,25 @@ class TodayScheduleWidget : GlanceAppWidget() {
             if (snapshot.updatedAt == 0L) {
                 EmptyHint()
             } else {
-                Column(modifier = GlanceModifier.fillMaxSize()) {
-                    Header(week, weekday, today)
-                    Spacer(GlanceModifier.height(8.dp))
-                    Body(courses, nowMins)
+                // 假期态：今天不在本学期任何教学周内（寒暑假 / 未开学）时不再显示
+                // 「今天没课」，改为假期问候 + 开学倒计时（下学期开学日存在快照里）。
+                val phase = if (snapshot.hasSemesterStart) {
+                    SemesterPhase.at(
+                        LocalDate.ofEpochDay(snapshot.semesterStartEpochDay),
+                        if (snapshot.totalWeeks > 0) snapshot.totalWeeks else 18,
+                        today,
+                    )
+                } else null
+                when (phase) {
+                    is SemesterPhase.Ended ->
+                        VacationContent(today, snapshot.nextSemesterStart)
+                    is SemesterPhase.NotStarted ->
+                        VacationContent(today, phase.startDate)
+                    else -> Column(modifier = GlanceModifier.fillMaxSize()) {
+                        Header(week, weekday, today)
+                        Spacer(GlanceModifier.height(8.dp))
+                        Body(courses, nowMins)
+                    }
                 }
             }
         }
@@ -306,6 +323,87 @@ class TodayScheduleWidget : GlanceAppWidget() {
         }
     }
 
+    /**
+     * 假期态内容：寒/暑假问候 + 开学倒计时。
+     * [nextStart] 为下一个学期的名义开学日；教务还没放出下学期选项时为 null，只显示问候。
+     */
+    @Composable
+    private fun VacationContent(today: LocalDate, nextStart: LocalDate?) {
+        Column(modifier = GlanceModifier.fillMaxSize()) {
+            Row(
+                modifier = GlanceModifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = vacationTitle(today.monthValue),
+                    style = TextStyle(
+                        color = GlanceTheme.colors.primary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                    ),
+                )
+                Spacer(modifier = GlanceModifier.defaultWeight())
+                Text(
+                    text = today.format(DateTimeFormatter.ofPattern("M月d日")),
+                    style = TextStyle(
+                        color = GlanceTheme.colors.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    ),
+                )
+            }
+            Box(
+                modifier = GlanceModifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val days = nextStart?.let { ChronoUnit.DAYS.between(today, it) }
+                    when {
+                        days == null -> Text(
+                            text = "好好休息，开学再见 😴",
+                            style = TextStyle(
+                                color = GlanceTheme.colors.onSurface,
+                                fontSize = 13.sp,
+                            ),
+                        )
+                        days <= 0L -> Text(
+                            text = "今天开学啦，打开 App 看看新课表 🎒",
+                            style = TextStyle(
+                                color = GlanceTheme.colors.onSurface,
+                                fontSize = 13.sp,
+                            ),
+                        )
+                        else -> {
+                            Text(
+                                text = "距开学还有",
+                                style = TextStyle(
+                                    color = GlanceTheme.colors.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                ),
+                            )
+                            Spacer(GlanceModifier.height(2.dp))
+                            Text(
+                                text = "$days 天",
+                                style = TextStyle(
+                                    color = GlanceTheme.colors.primary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 24.sp,
+                                ),
+                            )
+                            Spacer(GlanceModifier.height(2.dp))
+                            Text(
+                                text = nextStart.format(DateTimeFormatter.ofPattern("M月d日")) + " 开学",
+                                style = TextStyle(
+                                    color = GlanceTheme.colors.onSurfaceVariant,
+                                    fontSize = 11.sp,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun todayLabel(weekday: Int): String = when (weekday) {
         1 -> "周一"
         2 -> "周二"
@@ -351,4 +449,15 @@ internal fun snapshotCourseItemId(c: SnapshotCourse): Long {
     h = 31L * h + c.startSection
     h = 31L * h + c.endSection
     return h and Long.MAX_VALUE
+}
+
+/**
+ * 假期态标题：按当前月份粗分寒/暑假。江师大寒假约 1~2 月、暑假约 7~8 月，
+ * 边缘月份（6 月末考完 / 9 月初未开学、12 月末提前放假）也归入相邻假期；
+ * 其余月份（学期中途因故不在教学周内）用中性的「假期中」。
+ */
+internal fun vacationTitle(month: Int): String = when (month) {
+    12, 1, 2, 3 -> "寒假中 ❄️"
+    6, 7, 8, 9 -> "暑假中 ⛱️"
+    else -> "假期中"
 }

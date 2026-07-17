@@ -29,6 +29,11 @@ data class ScheduleSnapshot(
     val totalWeeks: Int,
     /** 本学期开学第一天的 epoch day；-1 表示未知（老快照 / 教务网没给）。 */
     val semesterStartEpochDay: Long,
+    /**
+     * 下一个学期的名义开学日 epoch day；-1 表示未知（教务还没放出下学期选项 / 老快照）。
+     * 假期态（本学期已结束）时 widget 用它显示「距开学 N 天」倒计时。
+     */
+    val nextSemesterStartEpochDay: Long = -1L,
     /** 保存这份 snapshot 那一刻是第几教学周；仅作为 [semesterStartEpochDay] 缺失时的回退。 */
     val savedWeek: Int,
     /** 本学期全部课程；widget 渲染时按当天 weekday / week 现场筛选。 */
@@ -74,6 +79,10 @@ data class ScheduleSnapshot(
     /** 这份 snapshot 是否带有可信的学期起始日（旧版没有）。 */
     val hasSemesterStart: Boolean get() = semesterStartEpochDay >= 0L
 
+    /** 下学期名义开学日；未知（教务未放出 / 老快照）返回 null。 */
+    val nextSemesterStart: LocalDate?
+        get() = if (nextSemesterStartEpochDay >= 0L) LocalDate.ofEpochDay(nextSemesterStartEpochDay) else null
+
     /**
      * 把快照还原成完整 [Course] 列表，供课表页「离线兜底」展示（网络失败时显示上次缓存的课表）。
      * 快照为省体积只存了 widget 需要的字段，这里对缺失字段的处理：
@@ -115,6 +124,7 @@ data class ScheduleSnapshot(
             .put("semester", semester)
             .put("totalWeeks", totalWeeks)
             .put("semesterStartEpochDay", semesterStartEpochDay)
+            .put("nextSemesterStartEpochDay", nextSemesterStartEpochDay)
             .put("savedWeek", savedWeek)
             .put("updatedAt", updatedAt)
             .put("courses", arr)
@@ -136,6 +146,7 @@ data class ScheduleSnapshot(
             totalWeeks: Int,
             semesterStart: LocalDate?,
             all: List<Course>,
+            nextSemesterStart: LocalDate? = null,
         ): ScheduleSnapshot {
             val today = LocalDate.now()
             val startEpoch = semesterStart?.toEpochDay() ?: -1L
@@ -149,6 +160,7 @@ data class ScheduleSnapshot(
                 semester = semester,
                 totalWeeks = totalWeeks,
                 semesterStartEpochDay = startEpoch,
+                nextSemesterStartEpochDay = nextSemesterStart?.toEpochDay() ?: -1L,
                 savedWeek = savedWeek,
                 allCourses = all.map { c ->
                     SnapshotCourse(
@@ -190,6 +202,7 @@ data class ScheduleSnapshot(
                 semester = o.optString("semester"),
                 totalWeeks = o.optInt("totalWeeks", 0),
                 semesterStartEpochDay = o.optLong("semesterStartEpochDay", -1L),
+                nextSemesterStartEpochDay = o.optLong("nextSemesterStartEpochDay", -1L),
                 savedWeek = savedWeekField,
                 allCourses = list,
                 updatedAt = o.optLong("updatedAt"),

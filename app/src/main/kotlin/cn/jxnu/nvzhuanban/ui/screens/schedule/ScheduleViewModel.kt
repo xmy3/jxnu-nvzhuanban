@@ -387,7 +387,7 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
         val semesterStart =
             if (snap.hasSemesterStart) LocalDate.ofEpochDay(snap.semesterStartEpochDay) else null
         // 快照只可能是"本学期"的（refreshWidgetSnapshot 只在本学期写），按相位还原离线视图。
-        // 假期横幅拿不到开学倒计时（快照不含学期列表），只显示「本学期已结束」。
+        // 假期横幅的开学倒计时用快照里存的下学期开学日（教务未放出时为 null，只显示「本学期已结束」）。
         val week: Int
         val currentWeek: Int?
         var vacation: VacationInfo? = null
@@ -399,7 +399,7 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
             is SemesterPhase.Ended -> {
                 week = totalWeeks
                 currentWeek = null
-                vacation = VacationInfo(semesterEnded = true, nextStartDate = null)
+                vacation = VacationInfo(semesterEnded = true, nextStartDate = snap.nextSemesterStart)
             }
             is SemesterPhase.NotStarted -> {
                 week = 1
@@ -457,11 +457,18 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
             .firstOrNull { it.value == repo.currentSemesterValue() }?.isCurrent == true
         if (!isCurrentSemester) return
         val ctx = getApplication<Application>()
+        // 下一个学期的名义开学日：假期态时 widget 用它显示「距开学 N 天」倒计时
+        val today = LocalDate.now()
+        val nextStart = repo.availableSemesters()
+            .mapNotNull { it.startDate }
+            .filter { it.isAfter(today) }
+            .minOrNull()
         val snap = ScheduleSnapshot.fromCourses(
             semester = repo.currentSemester(),
             totalWeeks = repo.totalWeeks(),
             semesterStart = repo.currentSemesterStart(),
             all = all,
+            nextSemesterStart = nextStart,
         )
         val snapshotGeneration = WidgetSnapshotStore.generation()
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
