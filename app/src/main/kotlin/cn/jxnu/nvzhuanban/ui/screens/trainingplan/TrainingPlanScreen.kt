@@ -135,7 +135,10 @@ private fun TrainingPlanList(plan: TrainingPlan) {
                     TrainingPlanCourseItem(
                         course = course,
                         isLast = index == section.courses.lastIndex,
-                        modifier = Modifier.animateItem(),
+                        // fadeOutSpec = null：收起时课程行瞬时移除。默认的淡出动画会让被移除的
+                        // 行原地变成半透明「幽灵」，与正在上滑补位的下一个分组头重叠，观感很乱。
+                        // 展开方向保留淡入 + 位移，仍然是平滑的。
+                        modifier = Modifier.animateItem(fadeOutSpec = null),
                     )
                 }
             }
