@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -397,14 +399,22 @@ private fun CourseCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
-            Text(
+            // 教室号必须完整且单行：宽度不够时自动缩小字号（9sp → 最低 5sp）而不是截断。
+            // BasicText 的 autoSize 在 measure 期逐级试字号，不会引起额外重组。
+            BasicText(
                 text = "@${course.location}",
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                color = Color.White,
-                // 教室号必须整行显示不换行：softWrap 关掉，放不下截尾省略
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 9.sp,
+                    color = Color.White,
+                ),
                 maxLines = 1,
                 softWrap = false,
-                overflow = TextOverflow.Ellipsis,
+                autoSize = TextAutoSize.StepBased(
+                    minFontSize = 5.sp,
+                    maxFontSize = 9.sp,
+                    stepSize = 0.5.sp,
+                ),
+                modifier = Modifier.fillMaxWidth(),
             )
             if (teacherMaxLines > 0 && course.teacher.isNotBlank()) {
                 Text(
