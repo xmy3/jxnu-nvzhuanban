@@ -306,11 +306,6 @@ private fun CourseCard(
     onClick: () -> Unit,
 ) {
     val cardColor = courseColor(course, palette)
-    val locationMaxLines = when {
-        course.sectionCount >= 3 -> 3
-        course.sectionCount >= 2 -> 2
-        else -> 1
-    }
     val teacherMaxLines = if (course.sectionCount >= 2) 1 else 0
     // "周几 / 第几节"只体现在卡片的视觉排布（列位置 + y offset）上，语义树里读不到，
     // 这里显式并进描述，让 TalkBack 把卡片当一个整体播报
@@ -406,7 +401,9 @@ private fun CourseCard(
                 text = "@${course.location}",
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                 color = Color.White,
-                maxLines = locationMaxLines,
+                // 教室号必须整行显示不换行：softWrap 关掉，放不下截尾省略
+                maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis,
             )
             if (teacherMaxLines > 0 && course.teacher.isNotBlank()) {
