@@ -39,8 +39,8 @@ android {
         applicationId = "cn.jxnu.nvzhuanban"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1060
-        versionName = "1.6.0"
+        versionCode = 1061
+        versionName = "1.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
