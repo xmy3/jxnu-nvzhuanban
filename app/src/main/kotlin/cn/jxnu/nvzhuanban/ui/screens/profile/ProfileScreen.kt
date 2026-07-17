@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.ListAlt
@@ -60,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -72,7 +75,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -94,8 +100,12 @@ import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import cn.jxnu.nvzhuanban.ui.screens.announcement.openExternalHttpUrl
+import cn.jxnu.nvzhuanban.ui.widget.WidgetPinResultReceiver
 import cn.jxnu.nvzhuanban.ui.widget.isPinTodayScheduleWidgetSupported
+import cn.jxnu.nvzhuanban.ui.widget.openShortcutPermissionSettings
+import cn.jxnu.nvzhuanban.ui.widget.pinnedTodayScheduleWidgetCount
 import cn.jxnu.nvzhuanban.ui.widget.requestPinTodayScheduleWidget
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -119,8 +129,6 @@ fun ProfileScreen(
     var showThemeDialog by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showWidgetDialog by remember { mutableStateOf(false) }
-    // 打开弹窗时探测一次；一键添加请求被拒后也会翻成 false，弹窗随之切到纯手动引导
-    var widgetPinSupported by remember { mutableStateOf(true) }
     val themeMode by ThemePrefs.themeMode.collectAsState()
     val dynamicColor by ThemePrefs.dynamicColor.collectAsState()
     val showAvatar by AvatarPrefs.showAvatar.collectAsState()
@@ -211,10 +219,7 @@ fun ProfileScreen(
                         versionName = versionName,
                         latestRelease = latestRelease,
                         onAvatarToggle = AvatarPrefs::setShowAvatar,
-                        onAddWidgetClick = {
-                            widgetPinSupported = isPinTodayScheduleWidgetSupported(context)
-                            showWidgetDialog = true
-                        },
+                        onAddWidgetClick = { showWidgetDialog = true },
                         onAboutClick = { showAboutDialog = true },
                         onCheckUpdate = {
                             if (latestRelease != null) {
@@ -292,19 +297,7 @@ fun ProfileScreen(
     }
 
     if (showWidgetDialog) {
-        AddWidgetDialog(
-            pinSupported = widgetPinSupported,
-            onPin = {
-                if (requestPinTodayScheduleWidget(context)) {
-                    // 请求已受理，系统确认窗（若有）接管；被静默吞掉的场合用户重开弹窗即可看到手动引导
-                    showWidgetDialog = false
-                } else {
-                    // 桌面拒绝请求：弹窗不关，就地切换成"不支持一键添加"的手动引导文案
-                    widgetPinSupported = false
-                }
-            },
-            onDismiss = { showWidgetDialog = false },
-        )
+        AddWidgetDialog(onDismiss = { showWidgetDialog = false })
     }
 }
 
@@ -854,63 +847,155 @@ private fun ThemeChoiceDialog(
     )
 }
 
+/** [AddWidgetDialog] 的阶段。pin 是「发请求 → 系统确认窗 → 桌面回执」的异步链，各阶段文案与按钮不同。 */
+private enum class WidgetPinStage {
+    /** 初始：功能介绍 + 一键添加按钮，手动步骤兜底。 */
+    Ready,
+
+    /** 桌面上已有本小组件，等用户确认是否再加一个。 */
+    ConfirmDuplicate,
+
+    /** 请求已被桌面受理，等系统确认窗结果。被静默吞掉（国产桌面未授权）时，本阶段的权限引导是唯一出路。 */
+    Requested,
+
+    /** 桌面不支持 pin 请求（或请求被当场拒绝），只能手动添加。 */
+    Unsupported,
+}
+
 /**
- * 「添加桌面小组件」引导弹窗。手动添加步骤**始终展示**：即使桌面声称支持 pin 请求
- * （[pinSupported] = true），部分国产系统也会在未授予「桌面快捷方式」权限时把系统
- * 确认窗静默吞掉，用户点了「一键添加」却毫无动静——此时弹窗里的手动步骤是唯一出路。
+ * 「添加桌面小组件」引导弹窗。`AppWidgetManager.requestPinAppWidget` 返回 true 只代表
+ * 桌面**受理**了请求：部分国产系统（小米 / 华为等）在未授予「桌面快捷方式」权限时会把
+ * 系统确认窗静默吞掉，用户点了「一键添加」却毫无动静。因此请求发出后弹窗**不关闭**，
+ * 切到 [WidgetPinStage.Requested] 常驻「去开启权限 + 重试 + 手动步骤」三条出路；真正
+ * 添加成功由 [WidgetPinResultReceiver] 的回执驱动——Toast 反馈 + 本弹窗自动关闭。
  */
 @Composable
-private fun AddWidgetDialog(
-    pinSupported: Boolean,
-    onPin: () -> Unit,
-    onDismiss: () -> Unit,
-) {
+private fun AddWidgetDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var stage by remember {
+        mutableStateOf(
+            if (isPinTodayScheduleWidgetSupported(context)) WidgetPinStage.Ready
+            else WidgetPinStage.Unsupported,
+        )
+    }
+    // 发请求前记下的成功回执基线；Requested 阶段计数一旦越过基线（桌面确认添加成功）就自动收尾
+    var successBaseline by remember { mutableIntStateOf(0) }
+
+    if (stage == WidgetPinStage.Requested) {
+        LaunchedEffect(successBaseline) {
+            WidgetPinResultReceiver.successCount.first { it > successBaseline }
+            onDismiss()
+        }
+    }
+
+    val requestPin: () -> Unit = {
+        successBaseline = WidgetPinResultReceiver.successCount.value
+        stage = if (requestPinTodayScheduleWidget(context)) WidgetPinStage.Requested
+        else WidgetPinStage.Unsupported
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加桌面小组件") },
         text = {
-            Column {
+            // M3 AlertDialog 的 text 槽自身不滚动，超高内容会被直接裁切——大字体 / 小屏下
+            // Requested 阶段的「去开启权限」按钮可能被裁到点不到，必须自己加 verticalScroll
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                // 四个阶段的首句共用同一个 Text 节点并挂 liveRegion：stage 原地切换（弹窗
+                // 不重开）时文本变化会被 TalkBack 自动播报，读屏用户才知道引导内容更新了
                 Text(
-                    "「今日课表」小组件可在手机桌面直接查看当天课程和下一节课倒计时，无需打开 App。",
+                    text = when (stage) {
+                        WidgetPinStage.Ready ->
+                            "「今日课表」小组件可在手机桌面直接查看当天课程和下一节课倒计时，无需打开 App。"
+                        WidgetPinStage.ConfirmDuplicate ->
+                            "桌面上已经有「今日课表」小组件了，还要再添加一个吗？"
+                        WidgetPinStage.Requested -> "已向桌面发出添加请求："
+                        WidgetPinStage.Unsupported -> "当前桌面不支持一键添加，请手动添加："
+                    },
                     style = MaterialTheme.typography.bodyMedium,
+                    color = if (stage == WidgetPinStage.Unsupported) MaterialTheme.colorScheme.primary
+                    else Color.Unspecified,
+                    fontWeight = when (stage) {
+                        WidgetPinStage.Requested, WidgetPinStage.Unsupported -> FontWeight.SemiBold
+                        else -> null
+                    },
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
-                Spacer(Modifier.height(12.dp))
-                if (!pinSupported) {
-                    Text(
-                        "当前桌面不支持一键添加，请手动添加：",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
-                Text(
-                    "手动添加：长按桌面空白处 → 选择「窗口小工具（小部件）」→ 找到「女专办」拖到桌面。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (pinSupported) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "部分手机需先在系统设置中允许本应用「创建桌面快捷方式」，点「一键添加」没弹出确认窗时请改用手动方式。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                when (stage) {
+                    WidgetPinStage.Ready -> {
+                        Spacer(Modifier.height(12.dp))
+                        ManualAddSteps()
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "部分手机需先允许本应用「桌面快捷方式」权限才能一键添加，点了没反应时按弹窗提示处理即可。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    WidgetPinStage.ConfirmDuplicate -> Unit
+
+                    WidgetPinStage.Requested -> {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "屏幕上弹出了确认窗的话，点「添加」即可，成功后这里会自动关闭。",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "如果没有任何反应，是系统拦截了请求（小米、华为等手机常见）：点下方「去开启权限」允许本应用「桌面快捷方式」，回来再点「重试」；或按下面的步骤手动添加。",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        TextButton(
+                            onClick = { openShortcutPermissionSettings(context) },
+                            contentPadding = PaddingValues(0.dp),
+                        ) { Text("去开启权限") }
+                        ManualAddSteps()
+                    }
+
+                    WidgetPinStage.Unsupported -> {
+                        Spacer(Modifier.height(4.dp))
+                        ManualAddSteps()
+                    }
                 }
             }
         },
         confirmButton = {
-            if (pinSupported) {
-                TextButton(onClick = onPin) { Text("一键添加") }
-            } else {
-                TextButton(onClick = onDismiss) { Text("知道了") }
+            when (stage) {
+                WidgetPinStage.Ready -> TextButton(
+                    onClick = {
+                        if (pinnedTodayScheduleWidgetCount(context) > 0) {
+                            stage = WidgetPinStage.ConfirmDuplicate
+                        } else {
+                            requestPin()
+                        }
+                    },
+                ) { Text("一键添加") }
+
+                WidgetPinStage.ConfirmDuplicate -> TextButton(onClick = requestPin) { Text("仍要添加") }
+                WidgetPinStage.Requested -> TextButton(onClick = requestPin) { Text("重试") }
+                WidgetPinStage.Unsupported -> TextButton(onClick = onDismiss) { Text("知道了") }
             }
         },
         dismissButton = {
-            if (pinSupported) {
-                TextButton(onClick = onDismiss) { Text("取消") }
+            when (stage) {
+                WidgetPinStage.Ready, WidgetPinStage.ConfirmDuplicate ->
+                    TextButton(onClick = onDismiss) { Text("取消") }
+
+                WidgetPinStage.Requested -> TextButton(onClick = onDismiss) { Text("关闭") }
+                WidgetPinStage.Unsupported -> Unit
             }
         },
+    )
+}
+
+/** 手动添加小组件的通用步骤，Ready / Requested / Unsupported 三个阶段都常驻展示。 */
+@Composable
+private fun ManualAddSteps() {
+    Text(
+        "手动添加：长按桌面空白处 → 选择「窗口小工具（小部件）」→ 找到「女专办」拖到桌面。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
