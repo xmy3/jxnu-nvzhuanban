@@ -275,7 +275,7 @@ private fun FilterRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // 4 个 chip 在 360dp 屏上接近撑满，给一个横向滚动兜底以防被裁
+            // 5 个 chip 在 360dp 屏上放不下，靠横向滚动兜底
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -288,6 +288,9 @@ private fun FilterRow(
         }
         FilterPill(label = "通告", selected = current == AnnouncementFilter.BULLETIN) {
             onSelect(AnnouncementFilter.BULLETIN)
+        }
+        FilterPill(label = "风采", selected = current == AnnouncementFilter.SHOWCASE) {
+            onSelect(AnnouncementFilter.SHOWCASE)
         }
         FilterPill(label = "图文", selected = current == AnnouncementFilter.PICTURE_NEWS) {
             onSelect(AnnouncementFilter.PICTURE_NEWS)
@@ -488,6 +491,12 @@ private fun TypeTag(type: AnnouncementType) {
             MaterialTheme.colorScheme.tertiaryContainer,
             MaterialTheme.colorScheme.onTertiaryContainer,
             "通告",
+        )
+        // 风采多是喜报 / 获奖类报道，用 errorContainer 的柔和红呼应「喜报红」，与另外三色区分
+        AnnouncementType.SHOWCASE -> Triple(
+            MaterialTheme.colorScheme.errorContainer,
+            MaterialTheme.colorScheme.onErrorContainer,
+            "风采",
         )
         AnnouncementType.PICTURE_NEWS -> Triple(
             MaterialTheme.colorScheme.secondaryContainer,

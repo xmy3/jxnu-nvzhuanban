@@ -13,8 +13,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** 列表过滤：「全部」=三种都看，否则只看选中的那一种。 */
-enum class AnnouncementFilter { ALL, NOTIFICATION, BULLETIN, PICTURE_NEWS }
+/** 列表过滤：「全部」=四种都看，否则只看选中的那一种。 */
+enum class AnnouncementFilter { ALL, NOTIFICATION, BULLETIN, SHOWCASE, PICTURE_NEWS }
 
 data class AnnouncementScreenState(
     val data: UiState<List<Announcement>> = UiState.Loading,
@@ -43,6 +43,7 @@ data class AnnouncementScreenState(
                 AnnouncementFilter.ALL -> raw
                 AnnouncementFilter.NOTIFICATION -> raw.filter { it.type == AnnouncementType.NOTIFICATION }
                 AnnouncementFilter.BULLETIN -> raw.filter { it.type == AnnouncementType.BULLETIN }
+                AnnouncementFilter.SHOWCASE -> raw.filter { it.type == AnnouncementType.SHOWCASE }
                 AnnouncementFilter.PICTURE_NEWS -> raw.filter { it.type == AnnouncementType.PICTURE_NEWS }
             }
             val q = searchQuery.trim()

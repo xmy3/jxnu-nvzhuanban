@@ -362,6 +362,7 @@ class AuthRepository private constructor(
         TeacherDetailRepository.instance.clearCache()
         StudentRepository.instance.clearCache()
         StudentDetailRepository.instance.clearCache()
+        CourseOfferingRepository.instance.clearCache()
     }
 
     private suspend fun clearWidgetSnapshotOnSignOut() {

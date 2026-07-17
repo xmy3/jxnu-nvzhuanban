@@ -93,6 +93,18 @@ object JxnuUrls {
      */
     const val PAGE_CALENDAR_INDEX = "$JWC_BASE/Jxzl_Index.htm"
 
+    /**
+     * 开课安排查询页（Public_Kkap）。按 学期 / 学院 / 星期 / 节次 / 教室号 / 课程名 / 教师姓名
+     * 组合检索全校开课信息，结果是 GridView（`table#gvContent`）。
+     *
+     * 表单页 GET **无需登录**就能拿到（学期/学院下拉都在），但**查询 POST 必须带登录会话**：
+     * 匿名回传合法三件套也只会得到 51 字节纯文本「Error:系统错误，请与系统管理员联系！」
+     * （2026-07 实测，UA/Referer/字段组合均无关）。所以两步都走 *Auth 变体。
+     * 学院下拉的 value 是 8 位定宽代码（如 `51000   `，尾随空格必须原样回传）；
+     * 学期 value 格式 `yyyy/M/1 0:00:00`，与课表 ddlSterm 一致。
+     */
+    const val PAGE_COURSE_OFFERING = "$JWC_BASE/MyControl/Public_Kkap.aspx"
+
     /** 用户头像，UserNum 是学号的 base64。 */
     fun userPhotoUrl(studentId: String): String {
         val encoded = Base64.getEncoder().encodeToString(studentId.toByteArray(Charsets.UTF_8))

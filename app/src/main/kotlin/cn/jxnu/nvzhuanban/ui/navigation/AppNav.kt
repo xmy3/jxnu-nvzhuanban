@@ -57,6 +57,7 @@ import cn.jxnu.nvzhuanban.ui.screens.announcement.AnnouncementDetailScreen
 import cn.jxnu.nvzhuanban.ui.screens.announcement.AnnouncementScreen
 import cn.jxnu.nvzhuanban.ui.screens.calendar.CalendarScreen
 import cn.jxnu.nvzhuanban.ui.screens.classroom.ClassroomScreen
+import cn.jxnu.nvzhuanban.ui.screens.courseoffering.CourseOfferingScreen
 import cn.jxnu.nvzhuanban.ui.screens.exams.ExamsScreen
 import cn.jxnu.nvzhuanban.ui.screens.grades.GradesScreen
 import cn.jxnu.nvzhuanban.ui.screens.login.LoginScreen
@@ -78,6 +79,8 @@ object Routes {
     const val CLASSROOM = "classroom"
     const val TRAINING_PLAN = "training_plan"
     const val CALENDAR = "calendar"
+    /** 开课查询（Public_Kkap）：按学期/学院/教室/课程/教师检索全校开课。 */
+    const val COURSE_OFFERING = "course_offering"
     /** 教工 + 学生合并后的统一查询入口；进入后由顶部 chip 切换。 */
     const val PEOPLE_SEARCH = "people_search"
     const val PROFILE = "profile"
@@ -278,6 +281,9 @@ fun AppNav() {
             composable(Routes.CALENDAR) {
                 CalendarScreen(onBack = { nav.popBackStack() })
             }
+            composable(Routes.COURSE_OFFERING) {
+                CourseOfferingScreen(onBack = { nav.popBackStack() })
+            }
             composable(Routes.PEOPLE_SEARCH) {
                 PeopleSearchScreen(
                     onBack = { nav.popBackStack() },
@@ -372,6 +378,7 @@ fun AppNav() {
                     onOpenTrainingPlan = { nav.navigate(Routes.TRAINING_PLAN) },
                     onOpenPeopleSearch = { nav.navigate(Routes.PEOPLE_SEARCH) },
                     onOpenCalendar = { nav.navigate(Routes.CALENDAR) },
+                    onOpenCourseOffering = { nav.navigate(Routes.COURSE_OFFERING) },
                 )
             }
             composable(

@@ -3,11 +3,11 @@ package cn.jxnu.nvzhuanban.data.model
 import java.time.LocalDate
 
 /**
- * 教务通知 / 通告 / 图文新闻的列表条目。
+ * 教务通知 / 通告 / 教务风采 / 图文新闻的列表条目。
  *
  * 数据来源：
- *   - [AnnouncementType.NOTIFICATION] / [AnnouncementType.BULLETIN]：
- *     `jwc.jxnu.edu.cn/Portal/ArticlesList.aspx?type={Jwtz|Jwgg}`
+ *   - [AnnouncementType.NOTIFICATION] / [AnnouncementType.BULLETIN] / [AnnouncementType.SHOWCASE]：
+ *     `jwc.jxnu.edu.cn/Portal/ArticlesList.aspx?type={Jwtz|Jwgg|Jxfc}`
  *   - [AnnouncementType.PICTURE_NEWS]：
  *     `jwc.jxnu.edu.cn/Portal/ArticlesPictureNews.aspx?page=N`
  *
@@ -42,6 +42,13 @@ enum class AnnouncementType(val displayName: String) {
 
     /** 教务通告（ArticlesList.aspx?type=Jwgg）。 */
     BULLETIN("教务通告"),
+
+    /**
+     * 教务风采（ArticlesList.aspx?type=Jxfc）——各学院动态 / 获奖 / 讲座报道。
+     * type 串是「教学风采」的拼音缩写 Jxfc（门户首页 tab 写「教务风采」但搜索表单里叫「教学风采」）；
+     * 列表模板与通知 / 通告逐字节相同，共用 [cn.jxnu.nvzhuanban.data.network.pages.AnnouncementPage]。
+     */
+    SHOWCASE("教务风采"),
 
     /** 图文新闻（ArticlesPictureNews.aspx），带缩略图。 */
     PICTURE_NEWS("图文新闻"),

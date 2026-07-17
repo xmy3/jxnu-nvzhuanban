@@ -51,6 +51,9 @@
     <!-- 空教室 -->
     <string name="classroom_title">空闲教室</string>
 
+    <!-- 开课查询（Public_Kkap 开课安排检索） -->
+    <string name="course_offering_title">开课查询</string>
+
     <!-- 校历（教学周历索引） -->
     <string name="calendar_title">校历</string>
     <string name="calendar_empty">未解析到校历条目</string>

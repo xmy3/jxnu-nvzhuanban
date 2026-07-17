@@ -132,6 +132,7 @@ fun ProfileScreen(
     onOpenTrainingPlan: () -> Unit,
     onOpenPeopleSearch: () -> Unit,
     onOpenCalendar: () -> Unit,
+    onOpenCourseOffering: () -> Unit,
     viewModel: ProfileViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -225,6 +226,7 @@ fun ProfileScreen(
                         onOpenClassroom = onOpenClassroom,
                         onOpenPeopleSearch = onOpenPeopleSearch,
                         onOpenCalendar = onOpenCalendar,
+                        onOpenCourseOffering = onOpenCourseOffering,
                         onOpenTheme = { showThemeDialog = true },
                     )
                 }
@@ -549,9 +551,10 @@ private fun ToolsBlock(
     onOpenClassroom: () -> Unit,
     onOpenPeopleSearch: () -> Unit,
     onOpenCalendar: () -> Unit,
+    onOpenCourseOffering: () -> Unit,
     onOpenTheme: () -> Unit,
 ) {
-    // 二级功能集合：考试 / 培养方案已升级进上方数据摘要条，这里只剩 4 个入口，单行排满。
+    // 二级功能集合：考试 / 培养方案已升级进上方数据摘要条，这里 5 个入口单行排满。
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = AppShape.card,
@@ -562,7 +565,7 @@ private fun ToolsBlock(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 12.dp),
-            maxItemsInEachRow = 4,
+            maxItemsInEachRow = 5,
         ) {
             ToolTile(
                 icon = Icons.Outlined.CalendarMonth,
@@ -575,6 +578,12 @@ private fun ToolsBlock(
                 title = stringResource(R.string.people_search_title),
                 modifier = Modifier.weight(1f),
                 onClick = onOpenPeopleSearch,
+            )
+            ToolTile(
+                icon = Icons.AutoMirrored.Outlined.ListAlt,
+                title = stringResource(R.string.course_offering_title),
+                modifier = Modifier.weight(1f),
+                onClick = onOpenCourseOffering,
             )
             ToolTile(
                 icon = Icons.Outlined.MeetingRoom,

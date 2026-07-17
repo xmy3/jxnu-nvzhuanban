@@ -40,6 +40,17 @@ class AnnouncementPageTest {
     }
 
     @Test
+    fun `parses showcase rows in real jwc shape`() {
+        // 教务风采（type=Jxfc）实测行标记：href 用单引号、target 无引号，与通知同模板
+        val list = AnnouncementPage.parse(FIXTURE_SHOWCASE, AnnouncementType.SHOWCASE)
+        assertEquals(2, list.size)
+        assertEquals(AnnouncementType.SHOWCASE, list[0].type)
+        assertEquals("13691", list[0].id)
+        assertEquals("某学院教师斩获全国教学展示二等奖", list[0].title)
+        assertEquals(LocalDate.of(2026, 7, 6), list[0].date)
+    }
+
+    @Test
     fun `skips entries without date or id`() {
         val list = AnnouncementPage.parse(FIXTURE_BAD, AnnouncementType.NOTIFICATION)
         // 4 条里只有 1 条同时满足 id + 日期 + 标题非空
@@ -58,6 +69,21 @@ class AnnouncementPageTest {
             <a href="ArticlesView.aspx?id=13620" target="_blank">
               <div class="line border-bottom  margin-bottom text-big padding">
                 关于五一假期校园安全的通告 【2026-04-29】
+              </div>
+            </a>
+            </body></html>
+        """.trimIndent()
+
+        val FIXTURE_SHOWCASE = """
+            <html><body>
+            <a href='ArticlesView.aspx?id=13691' target=_blank>
+              <div class="line border-bottom  margin-bottom text-big padding">
+                 某学院教师斩获全国教学展示二等奖 【2026-07-06】
+              </div>
+            </a>
+            <a href='ArticlesView.aspx?id=13685' target=_blank>
+              <div class="line border-bottom  margin-bottom text-big padding">
+                 某学院举办本科生研究思维培养专题讲座 【2026-07-02】
               </div>
             </a>
             </body></html>
