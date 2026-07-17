@@ -66,6 +66,7 @@ fun TestGradesContent(
         StateScaffold(
             state = state,
             onRetry = viewModel::load,
+            loading = { m -> cn.jxnu.nvzhuanban.ui.components.ListSkeleton(modifier = m) },
         ) { report ->
             if (report.groups.isEmpty()) {
                 EmptyState(stringResource(R.string.test_grades_empty))

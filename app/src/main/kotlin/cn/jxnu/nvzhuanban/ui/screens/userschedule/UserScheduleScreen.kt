@@ -88,6 +88,7 @@ fun UserScheduleScreen(
             state = state,
             modifier = Modifier.padding(padding),
             onRetry = viewModel::load,
+            loading = { m -> cn.jxnu.nvzhuanban.ui.components.ScheduleSkeleton(modifier = m) },
         ) { parsed ->
             ScheduleBody(
                 parsed = parsed,

@@ -105,6 +105,7 @@ fun ExamsScreen(
             StateScaffold(
                 state = state,
                 onRetry = viewModel::load,
+                loading = { m -> cn.jxnu.nvzhuanban.ui.components.ListSkeleton(modifier = m) },
             ) { bundle ->
                 if (bundle.regular.isEmpty() && bundle.makeup.isEmpty()) {
                     EmptyState(stringResource(R.string.exams_empty))

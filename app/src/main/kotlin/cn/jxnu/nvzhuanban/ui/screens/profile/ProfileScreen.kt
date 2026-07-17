@@ -1,7 +1,10 @@
 package cn.jxnu.nvzhuanban.ui.screens.profile
 
 import android.os.Build
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,8 +73,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -100,6 +106,7 @@ import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import cn.jxnu.nvzhuanban.ui.screens.announcement.openExternalHttpUrl
+import cn.jxnu.nvzhuanban.ui.theme.AppShape
 import cn.jxnu.nvzhuanban.ui.widget.WidgetPinResultReceiver
 import cn.jxnu.nvzhuanban.ui.widget.isPinTodayScheduleWidgetSupported
 import cn.jxnu.nvzhuanban.ui.widget.openShortcutPermissionSettings
@@ -183,6 +190,7 @@ fun ProfileScreen(
             state = state,
             modifier = Modifier.padding(padding),
             onRetry = viewModel::load,
+            loading = { m -> cn.jxnu.nvzhuanban.ui.components.ProfileSkeleton(modifier = m) },
         ) { data ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -308,18 +316,32 @@ private fun UserCard(
     enrichStatus: EnrichStatus,
     onRetryEnrich: () -> Unit,
 ) {
+    // 主角卡：斜向渐变（primary → primary/tertiary 混色）+ 右上/左下两个大半透明装饰圆，
+    // 比旧的水平 primary→primary(0.8) 更有层次。装饰圆走 drawBehind，不参与布局与语义。
+    val primary = MaterialTheme.colorScheme.primary
+    val tertiary = MaterialTheme.colorScheme.tertiary
+    val decorColor = MaterialTheme.colorScheme.onPrimary
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(AppShape.heroCard)
             .background(
-                Brush.horizontalGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.primary,
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
-                    ),
+                Brush.linearGradient(
+                    listOf(primary, lerp(primary, tertiary, 0.45f)),
                 ),
             )
+            .drawBehind {
+                drawCircle(
+                    color = decorColor.copy(alpha = 0.08f),
+                    radius = size.height * 0.9f,
+                    center = Offset(size.width * 0.92f, -size.height * 0.15f),
+                )
+                drawCircle(
+                    color = decorColor.copy(alpha = 0.06f),
+                    radius = size.height * 0.6f,
+                    center = Offset(size.width * 0.08f, size.height * 1.05f),
+                )
+            }
             .padding(20.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -331,6 +353,11 @@ private fun UserCard(
                 modifier = Modifier
                     .size(64.dp)
                     .clip(RoundedCornerShape(20.dp))
+                    .border(
+                        width = 1.5.dp,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f),
+                        shape = RoundedCornerShape(20.dp),
+                    )
                     .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)),
                 fallback = {
                     Icon(
@@ -415,7 +442,7 @@ private fun GradesEntryCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
+        shape = AppShape.card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -439,8 +466,18 @@ private fun GradesEntryCard(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
+                // 动画状态必须无条件持有：若放进 if(>0) 分支，enrich 首次把学分从 0 填成
+                // 正值时动画才首次组合、首帧直接落在真值，根本不会滚动。这里用 started 标志
+                // 钉住首帧为 0，冷启动缓存命中（进屏就有值）也能播一次进场滚动。
+                var creditsStarted by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { creditsStarted = true }
+                val animatedCredits by animateFloatAsState(
+                    targetValue = if (creditsStarted) cumulativeCredits else 0f,
+                    animationSpec = tween(durationMillis = 700),
+                    label = "credits",
+                )
                 val subtitle = if (cumulativeCredits > 0f) {
-                    "已修 ${cumulativeCredits.formatCredit()} 学分"
+                    "已修 ${animatedCredits.formatCredit()} 学分"
                 } else {
                     "查看历年成绩与标准分"
                 }
@@ -475,7 +512,7 @@ private fun ToolsBlock(
     // 但 Dialog 打开后就能看到当前选中项。
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = AppShape.card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -566,7 +603,7 @@ private fun SettingsBlock(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = AppShape.card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {

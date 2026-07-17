@@ -87,6 +87,7 @@ fun TrainingPlanScreen(
             StateScaffold(
                 state = state,
                 onRetry = viewModel::load,
+                loading = { m -> cn.jxnu.nvzhuanban.ui.components.ListSkeleton(modifier = m) },
             ) { plan ->
                 if (plan.sections.isEmpty()) {
                     EmptyState("暂无培养方案课程")

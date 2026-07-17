@@ -58,6 +58,7 @@ fun StudentDetailScreen(
             state = state,
             modifier = Modifier.padding(padding),
             onRetry = viewModel::load,
+            loading = { m -> cn.jxnu.nvzhuanban.ui.components.PersonDetailSkeleton(modifier = m) },
         ) { info ->
             StudentDetailBody(
                 userNum = userNum,

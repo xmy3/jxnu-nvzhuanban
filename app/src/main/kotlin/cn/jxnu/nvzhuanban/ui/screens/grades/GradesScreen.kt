@@ -1,5 +1,8 @@
 package cn.jxnu.nvzhuanban.ui.screens.grades
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,8 +33,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -51,8 +56,10 @@ import cn.jxnu.nvzhuanban.data.model.SemesterSummary
 import cn.jxnu.nvzhuanban.data.model.formatCredit
 import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
+import cn.jxnu.nvzhuanban.ui.components.ListSkeleton
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+import cn.jxnu.nvzhuanban.ui.theme.AppShape
 
 private enum class GradesTab(val labelRes: Int) {
     Semester(R.string.grades_tab_semester),
@@ -128,6 +135,7 @@ private fun SemesterGradesContent(viewModel: GradesViewModel) {
         StateScaffold(
             state = state,
             onRetry = viewModel::load,
+            loading = { m -> ListSkeleton(modifier = m, showHeroCard = true) },
         ) { data ->
             val semesters = data.semesters
             if (semesters.isEmpty()) {
@@ -159,6 +167,12 @@ private fun GradesList(
     }
     val (totalCredit, cumGpa, courseCount) = aggregates
 
+    // 数字进场动画的 started 标志必须放在 LazyColumn 外：header item 无 key 且列表很长，
+    // 滚出视口后 item 被销毁、item 内的 remember 会丢，滚回顶部就会重播一遍 0 起动画。
+    // 提到这里后生命周期跟随整个列表，动画只在首次进屏播一次。
+    var statsStarted by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { statsStarted = true }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -170,11 +184,14 @@ private fun GradesList(
                 totalCredit = totalCredit,
                 graduationMinimumCredits = graduationMinimumCredits,
                 courseCount = courseCount,
+                started = statsStarted,
             )
         }
         semesters.forEach { sem ->
             item(key = "header_${sem.semester}", contentType = "semHeader") { SemesterHeader(sem) }
-            items(sem.grades, key = { it.id }, contentType = { "grade" }) { g -> GradeRow(g) }
+            items(sem.grades, key = { it.id }, contentType = { "grade" }) { g ->
+                GradeRow(g, modifier = Modifier.animateItem())
+            }
         }
         item { Spacer(modifier = Modifier.height(8.dp)) }
     }
@@ -186,11 +203,26 @@ private fun GpaHeaderCard(
     totalCredit: Float,
     graduationMinimumCredits: Float?,
     courseCount: Int,
+    started: Boolean,
 ) {
+    // 数字进场滚动：首帧从 0 起动画到真值（animate*AsState 首次组合直接落在 target，
+    // 需要靠调用方传入的 started 标志把首帧钉在 0——标志活在 LazyColumn 外，见 GradesList）。
+    // 之后 refresh 带来的数值变化也会平滑过渡。
+    val numberSpec = tween<Float>(durationMillis = 700)
+    val animatedGpa by animateFloatAsState(
+        targetValue = if (started) gpa else 0f, animationSpec = numberSpec, label = "gpa",
+    )
+    val animatedCredit by animateFloatAsState(
+        targetValue = if (started) totalCredit else 0f, animationSpec = numberSpec, label = "credit",
+    )
+    val animatedCount by animateIntAsState(
+        targetValue = if (started) courseCount else 0,
+        animationSpec = tween(durationMillis = 700), label = "count",
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(AppShape.heroCard)
             .background(
                 Brush.horizontalGradient(
                     listOf(
@@ -212,19 +244,19 @@ private fun GpaHeaderCard(
             ) {
                 StatCol(
                     label = stringResource(R.string.grades_gpa_label),
-                    value = "%.2f".format(gpa),
+                    value = "%.2f".format(animatedGpa),
                     modifier = Modifier.weight(1f),
                 )
                 VerticalDivider()
                 StatCol(
                     label = stringResource(R.string.grades_credit_label),
-                    value = totalCredit.formatCredit(),
+                    value = animatedCredit.formatCredit(),
                     modifier = Modifier.weight(1f),
                 )
                 VerticalDivider()
                 StatCol(
                     label = stringResource(R.string.grades_count_label),
-                    value = courseCount.toString(),
+                    value = animatedCount.toString(),
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -311,10 +343,10 @@ private fun SemesterHeader(sem: SemesterSummary) {
 }
 
 @Composable
-private fun GradeRow(grade: Grade) {
+private fun GradeRow(grade: Grade, modifier: Modifier = Modifier) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        modifier = modifier.fillMaxWidth(),
+        shape = AppShape.listItem,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -386,7 +418,7 @@ private fun Tag(text: String, primary: Boolean, warning: Boolean = false) {
         style = MaterialTheme.typography.labelSmall,
         color = textColor,
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(AppShape.tag)
             .background(containerColor)
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )

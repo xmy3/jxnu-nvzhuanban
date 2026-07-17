@@ -89,6 +89,7 @@ fun CalendarScreen(
             StateScaffold(
                 state = state,
                 onRetry = viewModel::load,
+                loading = { m -> cn.jxnu.nvzhuanban.ui.components.ListSkeleton(modifier = m) },
             ) { entries ->
                 if (entries.isEmpty()) {
                     EmptyState(stringResource(R.string.calendar_empty))

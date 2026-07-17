@@ -259,6 +259,7 @@ fun ScheduleScreen(
             StateScaffold(
                 state = state.data,
                 onRetry = viewModel::refresh,
+                loading = { m -> cn.jxnu.nvzhuanban.ui.components.ScheduleSkeleton(modifier = m) },
             ) { courses ->
                 PullToRefreshBox(
                     isRefreshing = isRefreshing,

@@ -129,6 +129,7 @@ fun AnnouncementDetailScreen(
                 .fillMaxSize()
                 .padding(padding),
             onRetry = vm::load,
+            loading = { m -> cn.jxnu.nvzhuanban.ui.components.ArticleSkeleton(modifier = m) },
         ) { detail ->
             if (detail.requiresLogin) {
                 // jwc 无会话时返回的"需要登录"占位页：不渲染正文，给出 app 内登录引导。

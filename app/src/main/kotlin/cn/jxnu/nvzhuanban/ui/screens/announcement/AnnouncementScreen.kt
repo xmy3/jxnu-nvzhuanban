@@ -72,6 +72,7 @@ import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+import cn.jxnu.nvzhuanban.ui.theme.AppShape
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.flow.drop
@@ -144,6 +145,9 @@ fun AnnouncementScreen(
                 StateScaffold(
                     state = state.data,
                     onRetry = viewModel::load,
+                    loading = { m ->
+                        cn.jxnu.nvzhuanban.ui.components.ListSkeleton(modifier = m, showThumbEvery = 3)
+                    },
                 ) {
                     // remember：同输入返回同实例。visibleList 是计算属性，过滤态下每次读取都
                     // 重新 filter 并分配新 List，isRefreshing/isLoadingMore 翻转这类无关重组
@@ -352,7 +356,9 @@ private fun AnnouncementList(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(list, key = { "${it.type}_${it.id}" }) { a -> AnnouncementCard(a, onItemClick) }
+        items(list, key = { "${it.type}_${it.id}" }) { a ->
+            AnnouncementCard(a, onItemClick, modifier = Modifier.animateItem())
+        }
         item(key = "__footer__") {
             ListFooter(
                 hasMore = hasMore,
@@ -407,12 +413,16 @@ private fun ListFooter(
 private val DATE_FMT = DateTimeFormatter.ofPattern("M月d日", Locale.CHINA)
 
 @Composable
-private fun AnnouncementCard(a: Announcement, onItemClick: (Announcement) -> Unit) {
+private fun AnnouncementCard(
+    a: Announcement,
+    onItemClick: (Announcement) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { onItemClick(a) },
-        shape = RoundedCornerShape(16.dp),
+        shape = AppShape.listItem,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -487,7 +497,7 @@ private fun TypeTag(type: AnnouncementType) {
     }
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(AppShape.tag)
             .background(bg)
             .padding(horizontal = 8.dp, vertical = 2.dp),
     ) {

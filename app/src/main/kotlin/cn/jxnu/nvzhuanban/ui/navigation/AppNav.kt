@@ -1,5 +1,13 @@
 package cn.jxnu.nvzhuanban.ui.navigation
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -116,6 +124,31 @@ private val TABS = listOf(
 
 private val mainRouteSet = TABS.map { it.route }.toSet()
 
+/** 转场按「淡入淡出」处理的路由：三个主 tab 互切 + 登录页进出（没有层级关系，滑动不合适）。 */
+private val fadeRouteSet = mainRouteSet + Routes.LOGIN
+
+private const val NAV_ANIM_MS = 260
+
+/** 两端都是平级页（主 tab / 登录页）时 fade，否则视为「进入/退出子页面」走水平滑动。 */
+private fun AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>.isPeerNav(): Boolean =
+    initialState.destination.route in fadeRouteSet && targetState.destination.route in fadeRouteSet
+
+private fun AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>.navEnter(): EnterTransition =
+    if (isPeerNav()) fadeIn(tween(NAV_ANIM_MS))
+    else slideInHorizontally(tween(NAV_ANIM_MS)) { it / 4 } + fadeIn(tween(NAV_ANIM_MS))
+
+private fun AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>.navExit(): ExitTransition =
+    if (isPeerNav()) fadeOut(tween(NAV_ANIM_MS))
+    else slideOutHorizontally(tween(NAV_ANIM_MS)) { -it / 5 } + fadeOut(tween(NAV_ANIM_MS))
+
+private fun AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>.navPopEnter(): EnterTransition =
+    if (isPeerNav()) fadeIn(tween(NAV_ANIM_MS))
+    else slideInHorizontally(tween(NAV_ANIM_MS)) { -it / 5 } + fadeIn(tween(NAV_ANIM_MS))
+
+private fun AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>.navPopExit(): ExitTransition =
+    if (isPeerNav()) fadeOut(tween(NAV_ANIM_MS))
+    else slideOutHorizontally(tween(NAV_ANIM_MS)) { it / 4 } + fadeOut(tween(NAV_ANIM_MS))
+
 @Composable
 fun AppNav() {
     // Splash 限时 800ms 兜底放行（见 MainActivity.SPLASH_MAX_WAIT_MS）—— 如果 sessionRestore
@@ -201,6 +234,11 @@ fun AppNav() {
             navController = nav,
             startDestination = startDestination,
             modifier = Modifier.padding(innerPadding),
+            // 主 tab 之间（无层级）淡入淡出；进出子页面（有层级）水平滑动 + 淡入淡出。
+            enterTransition = { navEnter() },
+            exitTransition = { navExit() },
+            popEnterTransition = { navPopEnter() },
+            popExitTransition = { navPopExit() },
         ) {
             composable(Routes.LOGIN) {
                 LoginScreen(
