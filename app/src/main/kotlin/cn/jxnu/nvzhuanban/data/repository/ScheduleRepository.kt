@@ -1,15 +1,15 @@
 ﻿package cn.jxnu.nvzhuanban.data.repository
 
 import cn.jxnu.nvzhuanban.data.model.Course
+import cn.jxnu.nvzhuanban.data.model.SemesterPhase
 import cn.jxnu.nvzhuanban.data.network.JwcClient
 import cn.jxnu.nvzhuanban.data.network.JxnuUrls
 import cn.jxnu.nvzhuanban.data.network.pages.SchedulePage
 import cn.jxnu.nvzhuanban.data.storage.CourseOverridesStore
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import okhttp3.FormBody
+import java.time.LocalDate
 
 class ScheduleRepository(
     private val gradeRepo: GradeRepository = GradeRepository.instance,
@@ -68,8 +68,20 @@ class ScheduleRepository(
             cachedBySemester[serverValue] = initial
         }
 
+        // 假期特例：按日期的"本学期"已经结束（寒暑假），而服务器默认渲染的是一个未来学期
+        // （教务通常在假期后段就把默认切到下学期）→ 尊重服务器的选择，不再 POST 切回
+        // 已结束的学期。教务切默认学期的时机就是"该看新学期了"的最好信号，还省一次网络请求。
+        // byDate 学期自己的 totalWeeks 拿不到（那页没抓），用当前响应的 totalWeeks 近似——
+        // 同校学期周数基本一致，偏差最多让这个特例晚/早生效一两周，无实害。
+        val today = LocalDate.now()
+        val byDateStart = initial.semesters.firstOrNull { it.isCurrent }?.startDate
+        val serverStart = initial.semesters.firstOrNull { it.value == serverValue }?.startDate
+        val vacationRespectServer =
+            SemesterPhase.at(byDateStart, initial.totalWeeks, today) is SemesterPhase.Ended &&
+                serverStart?.isAfter(today) == true
+
         // 默认渲染的不是"本学期" → 自动 POST 切到本学期。失败就退回到默认数据，至少让用户看到点东西。
-        val byDate = if (byDateValue != null && byDateValue != serverValue) {
+        val byDate = if (!vacationRespectServer && byDateValue != null && byDateValue != serverValue) {
             runCatching { fetchSemester(byDateValue, initial) }.getOrNull()
         } else null
 
@@ -259,9 +271,12 @@ class ScheduleRepository(
     fun currentSemesterValue(): String? = selectedSemesterValue
 
     /**
-     * 学期开学第一天到今天的周数（1-based）。仅对"本学期"有意义；切到历史/未来学期时返回 1。
+     * 今天相对**当前选中学期**的相位（进行中第几周 / 未开学 / 已结束）。
+     * 未加载或教务没给开学日时返回 null。仅当选中的是"本学期"时对"今天是第几周"有意义；
+     * 选中历史学期时会得到 [SemesterPhase.Ended]、未来学期得到 [SemesterPhase.NotStarted]，
+     * 由 ViewModel 结合 [SchedulePage.SemesterOption.isCurrent] 解读。
      */
-    fun currentWeek(): Int = cached?.currentWeekAt() ?: 1
+    fun currentPhase(today: LocalDate = LocalDate.now()): SemesterPhase? = cached?.phaseAt(today)
     fun totalWeeks(): Int = cached?.totalWeeks ?: 18
     fun currentSemester(): String = cached?.semester ?: "—"
     /** 当前已加载学期的开学日；UI 用来把 `(week, weekday)` 反算成日期。 */

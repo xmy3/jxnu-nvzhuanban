@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
 import cn.jxnu.nvzhuanban.data.model.Course
+import cn.jxnu.nvzhuanban.data.model.SemesterPhase
 import cn.jxnu.nvzhuanban.data.network.toUserMessage
 import cn.jxnu.nvzhuanban.data.network.pages.SchedulePage
 import cn.jxnu.nvzhuanban.data.repository.ScheduleRepository
@@ -21,6 +22,22 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+
+/**
+ * 假期语境下（今天不在正在查看的学期的任何教学周内）的横幅信息。
+ *
+ * @param semesterEnded true = 正在看的是**已结束的本学期**（寒暑假中打开课表的默认态）；
+ *   false = 正在看的是一个**尚未开学**的学期（假期里预览下学期，或学期中翻看未来学期）。
+ * @param nextStartDate 开学日（教务 option 的名义日期）。semesterEnded 时是下一个学期的
+ *   开学日（教务还没放出下学期选项时为 null）；!semesterEnded 时是正在看的学期自己的开学日。
+ * @param nextSemesterValue 下学期 option value，供横幅上「看下学期」一键切换；
+ *   仅 semesterEnded 且教务已放出下学期时非空。
+ */
+data class VacationInfo(
+    val semesterEnded: Boolean,
+    val nextStartDate: LocalDate?,
+    val nextSemesterValue: String? = null,
+)
 
 data class ScheduleScreenState(
     val selectedWeek: Int,
@@ -42,10 +59,13 @@ data class ScheduleScreenState(
      */
     val isOffline: Boolean = false,
     /**
-     * 本学期由开学日期算出的"当前教学周"；查看历史/未来学期时为 null（无"本周/今天"概念）。
+     * 本学期由开学日期算出的"当前教学周"；查看历史/未来学期，或**本学期已结束（假期）**
+     * 时为 null（此时没有"本周/今天"概念，UI 不高亮「今」列、不标「本周」chip）。
      * 放在 state 里让 UI 可观察 —— refresh/loadWeek 推进它时列头「今」与周 chip「本周」要跟着走。
      */
     val currentWeek: Int? = null,
+    /** 非 null = 假期语境，UI 显示假期横幅（本学期已结束 / 距开学倒计时），详见 [VacationInfo]。 */
+    val vacation: VacationInfo? = null,
 )
 
 class ScheduleViewModel(application: Application) : AndroidViewModel(application) {
@@ -55,25 +75,32 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
     private val repo: ScheduleRepository = ScheduleRepository.instance
 
     /**
-     * 当前教学周。初值是 repo 缓存里的值（首次启动为 1），课表拉取完成后会被覆盖为
-     * 通过学期开学日期计算出的真实周。
+     * 「今天」按钮在本学期应落到的周：学期进行中 = 真实当前教学周，已放假 = 最后一周，
+     * 未开学 = 第 1 周。初值 1；repo 已有缓存（VM 重建）时马上被下面 state 初始化里的
+     * [deriveTimeState] 覆盖，冷启动则在课表拉取完成后覆盖。
+     * 仅当选中的是"本学期"时才会更新——历史/未来学期没有"今天"概念。
      */
-    private var baselineWeek: Int = repo.currentWeek()
+    private var baselineWeek: Int = 1
     private var hasLoadedOnce: Boolean = false
 
     /** 用户是否手动切过学期。切过就别让"今日"按钮反复把他们拉回本学期。 */
     private var userPickedSemester: Boolean = false
 
     private val _state = MutableStateFlow(
-        ScheduleScreenState(
-            selectedWeek = baselineWeek,
-            totalWeeks = repo.totalWeeks(),
-            semester = repo.currentSemester(),
-            semesters = repo.availableSemesters(),
-            selectedSemesterValue = repo.currentSemesterValue(),
-            semesterStart = repo.currentSemesterStart(),
-            currentWeek = baselineWeek,
-        ),
+        run {
+            val ts = deriveTimeState()
+            baselineWeek = ts.baselineWeek
+            ScheduleScreenState(
+                selectedWeek = ts.baselineWeek,
+                totalWeeks = repo.totalWeeks(),
+                semester = repo.currentSemester(),
+                semesters = repo.availableSemesters(),
+                selectedSemesterValue = repo.currentSemesterValue(),
+                semesterStart = repo.currentSemesterStart(),
+                currentWeek = ts.currentWeek,
+                vacation = ts.vacation,
+            )
+        },
     )
     val state: StateFlow<ScheduleScreenState> = _state.asStateFlow()
 
@@ -81,6 +108,70 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     init { loadWeek(baselineWeek) }
+
+    /** 由 repo 当前缓存派生的"时间态"，见 [deriveTimeState]。 */
+    private data class TimeState(
+        /** 「今天」按钮在本学期的落点周（已钳制在 1..totalWeeks）。 */
+        val baselineWeek: Int,
+        /** 可观察的"本周"；仅"选中本学期且学期进行中"非 null。 */
+        val currentWeek: Int?,
+        /** 假期横幅信息；非假期语境为 null。 */
+        val vacation: VacationInfo?,
+        /** 当前选中的是否"本学期"（按日期推断 isCurrent 的那项）。 */
+        val isCurrentSelected: Boolean,
+    )
+
+    /**
+     * 每个数据落点（初始化 / loadWeek / refresh / selectSemester）统一走这里，把
+     * [SemesterPhase] 翻译成 UI 时间态。之前的实现直接用"开学日到今天除以 7"当作本周、
+     * 不设上限，暑假里会得出「第 20 周」——顶栏显示不存在的周、周 chip 无一选中、
+     * 「今」列错误高亮，这是本函数要消灭的历史 bug。
+     */
+    private fun deriveTimeState(today: LocalDate = LocalDate.now()): TimeState {
+        val semesters = repo.availableSemesters()
+        val selectedValue = repo.currentSemesterValue()
+        val isCurrentSelected = selectedValue != null &&
+            semesters.firstOrNull { it.value == selectedValue }?.isCurrent == true
+        val totalWeeks = repo.totalWeeks().coerceAtLeast(1)
+        return when (val phase = repo.currentPhase(today)) {
+            is SemesterPhase.InProgress -> if (isCurrentSelected) {
+                val week = phase.week.coerceIn(1, totalWeeks)
+                TimeState(week, week, null, isCurrentSelected = true)
+            } else {
+                // 选中的学期"进行中"却不是 isCurrent 项：仅在两个学期日期窗口重叠时出现，
+                // 按"翻看其他学期"处理（无本周概念、无横幅）
+                TimeState(baselineWeek, null, null, isCurrentSelected = false)
+            }
+            is SemesterPhase.Ended -> if (isCurrentSelected) {
+                // 寒暑假：本学期已结束。「今天」落到最后一周；找下一个学期做开学倒计时
+                val next = semesters
+                    .mapNotNull { o -> o.startDate?.takeIf { it.isAfter(today) }?.let { o to it } }
+                    .minByOrNull { it.second }
+                TimeState(
+                    baselineWeek = totalWeeks,
+                    currentWeek = null,
+                    vacation = VacationInfo(
+                        semesterEnded = true,
+                        nextStartDate = next?.second,
+                        nextSemesterValue = next?.first?.value,
+                    ),
+                    isCurrentSelected = true,
+                )
+            } else {
+                // 翻看早已结束的历史学期：不算假期语境，不打横幅
+                TimeState(baselineWeek, null, null, isCurrentSelected = false)
+            }
+            is SemesterPhase.NotStarted -> TimeState(
+                // 尚未开学的学期：假期里预览下学期、或开学日落在周五~周日时的头几天
+                //（此时它已是 isCurrent）。横幅显示它自己的开学倒计时。
+                baselineWeek = if (isCurrentSelected) 1 else baselineWeek,
+                currentWeek = null,
+                vacation = VacationInfo(semesterEnded = false, nextStartDate = phase.startDate),
+                isCurrentSelected = isCurrentSelected,
+            )
+            null -> TimeState(baselineWeek, null, null, isCurrentSelected)
+        }
+    }
 
     /**
      * 切换显示的教学周。仅更新 [_state]，**不**重新拉教务网 —— 江师大课表 HTML 不区分周次，
@@ -127,10 +218,8 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
             try {
                 repo.selectSemester(value)
                 val list = repo.getSchedule(_state.value.selectedWeek)
-                // 切到当前学期才有意义的 baselineWeek
-                val isCurrentSemester = repo.availableSemesters()
-                    .firstOrNull { it.value == value }?.isCurrent == true
-                if (isCurrentSemester) baselineWeek = repo.currentWeek()
+                val ts = deriveTimeState()
+                baselineWeek = ts.baselineWeek
                 _state.update {
                     it.copy(
                         data = UiState.Success(list),
@@ -139,10 +228,12 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                         selectedSemesterValue = value,
                         semesters = repo.availableSemesters(),
                         semesterStart = repo.currentSemesterStart(),
-                        // 切到本学期 → 跳到本周；切到历史/未来学期 → 第 1 周
-                        selectedWeek = if (isCurrentSemester) baselineWeek else 1,
+                        // 切到本学期 → 跳到"今天"基线周（进行中=本周，已放假=最后一周）；
+                        // 切到历史/未来学期 → 第 1 周
+                        selectedWeek = if (ts.isCurrentSelected) ts.baselineWeek else 1,
                         isOffline = false,
-                        currentWeek = if (isCurrentSemester) baselineWeek else null,
+                        currentWeek = ts.currentWeek,
+                        vacation = ts.vacation,
                     )
                 }
                 refreshWidgetSnapshot(list)
@@ -169,7 +260,8 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                     _state.update { it.copy(selectedWeek = coercedWeek) }
                 }
                 val list = repo.getSchedule(coercedWeek)
-                baselineWeek = repo.currentWeek()
+                val ts = deriveTimeState()
+                baselineWeek = ts.baselineWeek
                 _state.update {
                     it.copy(
                         data = UiState.Success(list),
@@ -179,7 +271,8 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                         selectedSemesterValue = repo.currentSemesterValue(),
                         semesterStart = repo.currentSemesterStart(),
                         isOffline = false,
-                        currentWeek = currentWeekOrNull(),
+                        currentWeek = ts.currentWeek,
+                        vacation = ts.vacation,
                     )
                 }
                 refreshWidgetSnapshot(list)
@@ -194,14 +287,6 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                 _isRefreshing.value = false
             }
         }
-    }
-
-    /** [ScheduleScreenState.currentWeek] 的取值：仅当选中的是"本学期"时才有"本周"概念。 */
-    private fun currentWeekOrNull(): Int? {
-        val selectedValue = repo.currentSemesterValue()
-        val isCurrentSemester = selectedValue == null ||
-            repo.availableSemesters().firstOrNull { it.value == selectedValue }?.isCurrent == true
-        return if (isCurrentSemester) baselineWeek else null
     }
 
     /**
@@ -227,7 +312,8 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                 val list = repo.getSchedule(week)
                 val wasFirstLoad = !hasLoadedOnce
                 hasLoadedOnce = true
-                baselineWeek = repo.currentWeek()
+                val ts = deriveTimeState()
+                baselineWeek = ts.baselineWeek
                 _state.update {
                     it.copy(
                         data = UiState.Success(list),
@@ -236,10 +322,12 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                         semesters = repo.availableSemesters(),
                         selectedSemesterValue = repo.currentSemesterValue(),
                         semesterStart = repo.currentSemesterStart(),
-                        // 仅首次加载、且用户没主动切过学期时，把 selectedWeek 拉到当前周
-                        selectedWeek = if (wasFirstLoad && !userPickedSemester) baselineWeek else it.selectedWeek,
+                        // 仅首次加载、且用户没主动切过学期时，把 selectedWeek 拉到"今天"基线周
+                        //（进行中=本周，已放假=最后一周，未开学=第 1 周；均已钳制在合法范围）
+                        selectedWeek = if (wasFirstLoad && !userPickedSemester) ts.baselineWeek else it.selectedWeek,
                         isOffline = false,
-                        currentWeek = currentWeekOrNull(),
+                        currentWeek = ts.currentWeek,
+                        vacation = ts.vacation,
                     )
                 }
                 // 每次成功拿到课表，把"今天 + 当前周"的快照存给桌面小部件用
@@ -285,6 +373,9 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
         val totalWeeks: Int,
         val semesterStart: LocalDate?,
         val week: Int,
+        /** 快照学期"进行中"才非 null；放假/未开学时离线视图同样不高亮「今 / 本周」。 */
+        val currentWeek: Int?,
+        val vacation: VacationInfo?,
     )
 
     /** 读磁盘快照（上次成功保存的本学期课表）并还原成可展示数据；无快照返回 null。 */
@@ -292,12 +383,43 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
         val ctx = getApplication<Application>()
         val snap = withContext(Dispatchers.IO) { WidgetSnapshotStore.load(ctx) }
         if (snap.allCourses.isEmpty()) return null
+        val totalWeeks = if (snap.totalWeeks > 0) snap.totalWeeks else 18
+        val semesterStart =
+            if (snap.hasSemesterStart) LocalDate.ofEpochDay(snap.semesterStartEpochDay) else null
+        // 快照只可能是"本学期"的（refreshWidgetSnapshot 只在本学期写），按相位还原离线视图。
+        // 假期横幅拿不到开学倒计时（快照不含学期列表），只显示「本学期已结束」。
+        val week: Int
+        val currentWeek: Int?
+        var vacation: VacationInfo? = null
+        when (val phase = SemesterPhase.at(semesterStart, totalWeeks, LocalDate.now())) {
+            is SemesterPhase.InProgress -> {
+                week = phase.week.coerceAtMost(totalWeeks)
+                currentWeek = week
+            }
+            is SemesterPhase.Ended -> {
+                week = totalWeeks
+                currentWeek = null
+                vacation = VacationInfo(semesterEnded = true, nextStartDate = null)
+            }
+            is SemesterPhase.NotStarted -> {
+                week = 1
+                currentWeek = null
+                vacation = VacationInfo(semesterEnded = false, nextStartDate = phase.startDate)
+            }
+            // 老快照没存开学日：沿用保存那一刻的周，无从判断假期
+            null -> {
+                week = snap.weekAt().coerceAtLeast(1)
+                currentWeek = week
+            }
+        }
         return RestoredSchedule(
             courses = snap.toCourses(),
             semester = snap.semester.ifBlank { "上次课表" },
-            totalWeeks = if (snap.totalWeeks > 0) snap.totalWeeks else 18,
-            semesterStart = if (snap.hasSemesterStart) LocalDate.ofEpochDay(snap.semesterStartEpochDay) else null,
-            week = snap.weekAt().coerceAtLeast(1),
+            totalWeeks = totalWeeks,
+            semesterStart = semesterStart,
+            week = week,
+            currentWeek = currentWeek,
+            vacation = vacation,
         )
     }
 
@@ -323,8 +445,8 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                 semesters = emptyList(),
                 selectedWeek = offline.week.coerceIn(1, offline.totalWeeks.coerceAtLeast(1)),
                 isOffline = true,
-                // 快照只存"本学期"的课表，还原出的周就是当前周
-                currentWeek = offline.week,
+                currentWeek = offline.currentWeek,
+                vacation = offline.vacation,
             )
         }
     }

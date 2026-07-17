@@ -2,12 +2,12 @@ package cn.jxnu.nvzhuanban.data.network.pages
 
 import cn.jxnu.nvzhuanban.data.model.Course
 import cn.jxnu.nvzhuanban.data.model.CourseType
+import cn.jxnu.nvzhuanban.data.model.SemesterPhase
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 /**
@@ -56,13 +56,13 @@ object SchedulePage {
          */
         val controlPrefix: String = "_ctl1",
     ) {
-        /** 用学期开始日推算今天是第几周（1-based）。无开始日时返回 1。 */
-        fun currentWeekAt(now: LocalDate = LocalDate.now()): Int {
-            val start = semesterStart ?: return 1
-            if (now.isBefore(start)) return 1
-            val days = ChronoUnit.DAYS.between(start, now)
-            return (days / 7).toInt().coerceAtLeast(0) + 1
-        }
+        /**
+         * 今天相对这页课表所属学期的相位（进行中第几周 / 未开学 / 已结束）。
+         * 无开始日时返回 null。周坐标 = [SemesterPhase.weekOneMonday]（最近周一），
+         * 与课表列头日期同一套。
+         */
+        fun phaseAt(today: LocalDate = LocalDate.now()): SemesterPhase? =
+            SemesterPhase.at(semesterStart, totalWeeks, today)
     }
 
     data class SemesterOption(
@@ -93,9 +93,13 @@ object SchedulePage {
     private const val DEFAULT_TOTAL_WEEKS = 18
     private val DEFAULT_WEEKS: List<Int> = (1..DEFAULT_TOTAL_WEEKS).toList()
 
-    fun parse(html: String): Parsed {
+    /**
+     * @param today 「今天」，决定 [SemesterOption.isCurrent] 的推断。默认真实当天；
+     *   测试注入固定日期以保证断言不随运行日期漂移。
+     */
+    fun parse(html: String, today: LocalDate = LocalDate.now()): Parsed {
         val doc = Jsoup.parse(html)
-        val semesters = parseSemesterOptions(doc)
+        val semesters = parseSemesterOptions(doc, today)
         val serverSelectedValue = doc.selectFirst("select[id$=_ddlSterm] > option[selected]")
             ?.attr("value")
             ?.takeIf { it.isNotBlank() }
@@ -128,7 +132,7 @@ object SchedulePage {
     private fun hiddenInput(doc: Document, name: String): String =
         doc.selectFirst("input[name=$name]")?.attr("value").orEmpty()
 
-    private fun parseSemesterOptions(doc: Document): List<SemesterOption> {
+    private fun parseSemesterOptions(doc: Document, today: LocalDate): List<SemesterOption> {
         val raw = doc.select("select[id$=_ddlSterm] > option").map { el ->
             SemesterOption(
                 label = el.text().trim(),
@@ -136,9 +140,8 @@ object SchedulePage {
                 isCurrent = false,
             )
         }
-        val today = LocalDate.now()
         // "本学期" = startDate <= today 中最近的一个。
-        // 暑/寒假期间会指向刚结束的学期（而不是下一学期），算可接受的近似。
+        // 暑/寒假期间会指向刚结束的学期（而不是下一学期）——上层用 SemesterPhase 区分假期态。
         val currentValue = raw
             .mapNotNull { opt -> opt.startDate?.let { opt to it } }
             .filter { !it.second.isAfter(today) }

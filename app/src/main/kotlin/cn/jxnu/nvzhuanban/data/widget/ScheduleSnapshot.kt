@@ -3,6 +3,7 @@ package cn.jxnu.nvzhuanban.data.widget
 import android.content.Context
 import cn.jxnu.nvzhuanban.data.model.Course
 import cn.jxnu.nvzhuanban.data.model.CourseType
+import cn.jxnu.nvzhuanban.data.model.SemesterPhase
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -34,11 +35,15 @@ data class ScheduleSnapshot(
     val allCourses: List<SnapshotCourse>,
     val updatedAt: Long,
 ) {
-    /** 依据日期算"今天是第几周"；学期未开始 / 学期已结束都返回 0，[semesterStartEpochDay] 未知则回退到 [savedWeek]。 */
+    /**
+     * 依据日期算"今天是第几周"；学期未开始 / 学期已结束都返回 0，[semesterStartEpochDay] 未知则回退到 [savedWeek]。
+     * 周坐标 = [SemesterPhase.weekOneMonday]（开学名义日对齐最近周一），与课表页同一套，保证 widget 的
+     * "第 N 周"和 App 顶栏一致。
+     */
     fun weekAt(date: LocalDate = LocalDate.now()): Int {
         if (semesterStartEpochDay < 0) return savedWeek
-        val start = LocalDate.ofEpochDay(semesterStartEpochDay)
-        val days = ChronoUnit.DAYS.between(start, date).toInt()
+        val monday = SemesterPhase.weekOneMonday(LocalDate.ofEpochDay(semesterStartEpochDay))
+        val days = ChronoUnit.DAYS.between(monday, date).toInt()
         if (days < 0) return 0
         val w = days / 7 + 1
         // 已知 totalWeeks 时，超出范围（寒暑假）按"不在学期内"处理，返回 0
@@ -135,7 +140,8 @@ data class ScheduleSnapshot(
             val today = LocalDate.now()
             val startEpoch = semesterStart?.toEpochDay() ?: -1L
             val savedWeek = if (semesterStart != null) {
-                val days = ChronoUnit.DAYS.between(semesterStart, today).toInt()
+                val monday = SemesterPhase.weekOneMonday(semesterStart)
+                val days = ChronoUnit.DAYS.between(monday, today).toInt()
                 val w = (days / 7 + 1).coerceAtLeast(1)
                 if (totalWeeks > 0) w.coerceAtMost(totalWeeks) else w
             } else 0

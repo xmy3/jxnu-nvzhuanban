@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.BeachAccess
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Palette
@@ -61,6 +62,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.jxnu.nvzhuanban.R
 import cn.jxnu.nvzhuanban.data.model.Course
+import cn.jxnu.nvzhuanban.data.model.SemesterPhase
 import cn.jxnu.nvzhuanban.data.network.pages.SchedulePage
 import cn.jxnu.nvzhuanban.data.storage.SchedulePalette
 import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
@@ -70,6 +72,7 @@ import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 internal val LEFT_LABEL_WIDTH = 36.dp
 internal val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
@@ -99,6 +102,65 @@ private fun OfflineBanner() {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
+    }
+}
+
+/**
+ * 假期横幅：今天不在正在查看的学期的任何教学周内时显示（[ScheduleScreenState.vacation] 非 null）。
+ * - 看已结束的本学期（寒暑假打开课表的默认态）→「假期中 · 距开学还有 X 天」+「看下学期」入口；
+ *   教务还没放出下学期选项时只显示「本学期已结束 · 假期中」。
+ * - 看尚未开学的学期 → 该学期自己的开学倒计时。
+ * [today] 是可观察状态（跨零点自刷新），倒计时天数会自动走。
+ */
+@Composable
+private fun VacationBanner(
+    info: VacationInfo,
+    today: LocalDate,
+    onViewNext: (String) -> Unit,
+) {
+    val days = info.nextStartDate?.let { ChronoUnit.DAYS.between(today, it) }
+    val text = when {
+        !info.semesterEnded -> when {
+            days == null -> "该学期尚未开学"
+            days <= 0L -> "即将开学"
+            else -> "距开学还有 $days 天"
+        }
+        days != null && days > 0L -> "假期中 · 距开学还有 $days 天"
+        else -> "本学期已结束 · 假期中"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.tertiaryContainer)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.BeachAccess,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.weight(1f),
+        )
+        val nextValue = info.nextSemesterValue
+        if (info.semesterEnded && nextValue != null) {
+            Text(
+                text = "看下学期 ›",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onViewNext(nextValue) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
     }
 }
 
@@ -185,6 +247,9 @@ fun ScheduleScreen(
                 onSelect = viewModel::selectWeek,
             )
             UpcomingExamBanner(onClick = onOpenExams)
+            state.vacation?.let { info ->
+                VacationBanner(info, today) { value -> viewModel.selectSemester(value) }
+            }
             WeekdayHeader(
                 todayWeekday = todayWeekday,
                 semesterStart = state.semesterStart,
@@ -521,11 +586,12 @@ private fun WeekdayHeader(
     semesterStart: LocalDate?,
     selectedWeek: Int,
 ) {
-    // 算出当前 week 的周一日期：先把 semesterStart 对齐到它所在那周的周一（previousOrSame），
-    // 再加 (week-1)*7 天。这样 currentWeekAt() 算出来的 baselineWeek 跟 UI 显示的日期是同一套坐标。
+    // 当前 week 的周一 = 第 1 周的周一（SemesterPhase.weekOneMonday，开学名义日对齐最近周一）
+    // 加 (week-1)*7 天。必须与 SemesterPhase.at 的周坐标同源，「今」列高亮那格的日期才恰好是今天
+    //（旧实现 header 用 previousOrSame、周次推算不对齐，开学日非周一的学期两者会错开一周）。
     val weekMonday: LocalDate? = remember(semesterStart, selectedWeek) {
         semesterStart
-            ?.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+            ?.let { SemesterPhase.weekOneMonday(it) }
             ?.plusDays(((selectedWeek - 1) * 7).toLong())
     }
     val dateFormatter = remember { java.time.format.DateTimeFormatter.ofPattern("M/d") }

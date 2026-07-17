@@ -1,6 +1,7 @@
 package cn.jxnu.nvzhuanban.data.network.pages
 
 import cn.jxnu.nvzhuanban.data.model.CourseType
+import cn.jxnu.nvzhuanban.data.model.SemesterPhase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -114,6 +115,25 @@ class SchedulePageTest {
         assertEquals("_ctl6", SchedulePage.parse(TEACHER_PREFIX_FIXTURE).controlPrefix)
         // 没有 ddlSterm 时退回到 _ctl1
         assertEquals("_ctl1", SchedulePage.parse("<html></html>").controlPrefix)
+    }
+
+    @Test
+    fun `isCurrent and phase follow the injected date`() {
+        // 学期中（2026-05-01）：本学期 = 25-26第2学期（selected，start 2026/3/1 周日 → 第 1 周
+        // 从 3/2 周一起算），第 9 周进行中
+        val may = SchedulePage.parse(FIXTURE, today = LocalDate.of(2026, 5, 1))
+        assertEquals("25-26第2学期", may.semesters.first { it.isCurrent }.label)
+        assertEquals(SemesterPhase.InProgress(9), may.phaseAt(LocalDate.of(2026, 5, 1)))
+
+        // 暑假（2026-07-17）：isCurrent 仍指向刚结束的春季学期，但相位已是 Ended ——
+        // 上层据此显示假期横幅，而不是旧算法的「第 20 周」
+        val summer = SchedulePage.parse(FIXTURE, today = LocalDate.of(2026, 7, 17))
+        assertEquals("25-26第2学期", summer.semesters.first { it.isCurrent }.label)
+        assertEquals(SemesterPhase.Ended, summer.phaseAt(LocalDate.of(2026, 7, 17)))
+
+        // 秋季开学后（2026-09-02）：isCurrent 移到 26-27第1学期
+        val autumn = SchedulePage.parse(FIXTURE, today = LocalDate.of(2026, 9, 2))
+        assertEquals("26-27第1学期", autumn.semesters.first { it.isCurrent }.label)
     }
 
     @Test
