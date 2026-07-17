@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -93,6 +94,8 @@ import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import cn.jxnu.nvzhuanban.ui.screens.announcement.openExternalHttpUrl
+import cn.jxnu.nvzhuanban.ui.widget.isPinTodayScheduleWidgetSupported
+import cn.jxnu.nvzhuanban.ui.widget.requestPinTodayScheduleWidget
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -115,6 +118,9 @@ fun ProfileScreen(
     var showAboutDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
+    var showWidgetDialog by remember { mutableStateOf(false) }
+    // 打开弹窗时探测一次；一键添加请求被拒后也会翻成 false，弹窗随之切到纯手动引导
+    var widgetPinSupported by remember { mutableStateOf(true) }
     val themeMode by ThemePrefs.themeMode.collectAsState()
     val dynamicColor by ThemePrefs.dynamicColor.collectAsState()
     val showAvatar by AvatarPrefs.showAvatar.collectAsState()
@@ -205,6 +211,10 @@ fun ProfileScreen(
                         versionName = versionName,
                         latestRelease = latestRelease,
                         onAvatarToggle = AvatarPrefs::setShowAvatar,
+                        onAddWidgetClick = {
+                            widgetPinSupported = isPinTodayScheduleWidgetSupported(context)
+                            showWidgetDialog = true
+                        },
                         onAboutClick = { showAboutDialog = true },
                         onCheckUpdate = {
                             if (latestRelease != null) {
@@ -278,6 +288,22 @@ fun ProfileScreen(
             onDynamicColorToggle = ThemePrefs::setDynamicColor,
             onSelect = { ThemePrefs.setMode(it); showThemeDialog = false },
             onDismiss = { showThemeDialog = false },
+        )
+    }
+
+    if (showWidgetDialog) {
+        AddWidgetDialog(
+            pinSupported = widgetPinSupported,
+            onPin = {
+                if (requestPinTodayScheduleWidget(context)) {
+                    // 请求已受理，系统确认窗（若有）接管；被静默吞掉的场合用户重开弹窗即可看到手动引导
+                    showWidgetDialog = false
+                } else {
+                    // 桌面拒绝请求：弹窗不关，就地切换成"不支持一键添加"的手动引导文案
+                    widgetPinSupported = false
+                }
+            },
+            onDismiss = { showWidgetDialog = false },
         )
     }
 }
@@ -540,6 +566,7 @@ private fun SettingsBlock(
     versionName: String,
     latestRelease: AppRelease?,
     onAvatarToggle: (Boolean) -> Unit,
+    onAddWidgetClick: () -> Unit,
     onAboutClick: () -> Unit,
     onCheckUpdate: () -> Unit,
     onLogoutClick: () -> Unit,
@@ -551,6 +578,13 @@ private fun SettingsBlock(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column {
+            SettingsRow(
+                icon = Icons.Outlined.Widgets,
+                title = "添加桌面小组件",
+                subtitle = "把「今日课表」放到手机桌面",
+                onClick = onAddWidgetClick,
+            )
+            SettingsDivider()
             SettingsToggleRow(
                 icon = Icons.Outlined.AccountCircle,
                 title = "显示学生头像",
@@ -816,6 +850,66 @@ private fun ThemeChoiceDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("好") }
+        },
+    )
+}
+
+/**
+ * 「添加桌面小组件」引导弹窗。手动添加步骤**始终展示**：即使桌面声称支持 pin 请求
+ * （[pinSupported] = true），部分国产系统也会在未授予「桌面快捷方式」权限时把系统
+ * 确认窗静默吞掉，用户点了「一键添加」却毫无动静——此时弹窗里的手动步骤是唯一出路。
+ */
+@Composable
+private fun AddWidgetDialog(
+    pinSupported: Boolean,
+    onPin: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("添加桌面小组件") },
+        text = {
+            Column {
+                Text(
+                    "「今日课表」小组件可在手机桌面直接查看当天课程和下一节课倒计时，无需打开 App。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                if (!pinSupported) {
+                    Text(
+                        "当前桌面不支持一键添加，请手动添加：",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                Text(
+                    "手动添加：长按桌面空白处 → 选择「窗口小工具（小部件）」→ 找到「女专办」拖到桌面。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (pinSupported) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "部分手机需先在系统设置中允许本应用「创建桌面快捷方式」，点「一键添加」没弹出确认窗时请改用手动方式。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (pinSupported) {
+                TextButton(onClick = onPin) { Text("一键添加") }
+            } else {
+                TextButton(onClick = onDismiss) { Text("知道了") }
+            }
+        },
+        dismissButton = {
+            if (pinSupported) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
         },
     )
 }
