@@ -1,6 +1,11 @@
 package cn.jxnu.nvzhuanban.ui.screens.trainingplan
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -190,7 +195,16 @@ private fun TrainingPlanSummary(plan: TrainingPlan) {
                     )
                 }
             }
-            AnimatedVisibility(visible = expanded && hasDetails) {
+            // 显式纵向展开/收起：AnimatedVisibility 的默认转场是 expandIn/shrinkOut，
+            // 会从左上角斜向裁剪展开，观感像内容从角落挤出来。这里限定只在竖直方向
+            // 展开（从顶部生长）+ 淡入淡出，才是「下拉抽屉」的正常观感。
+            AnimatedVisibility(
+                visible = expanded && hasDetails,
+                enter = fadeIn(animationSpec = tween(200)) +
+                    expandVertically(animationSpec = tween(250), expandFrom = Alignment.Top),
+                exit = fadeOut(animationSpec = tween(150)) +
+                    shrinkVertically(animationSpec = tween(250), shrinkTowards = Alignment.Top),
+            ) {
                 Column(
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
