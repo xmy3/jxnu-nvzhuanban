@@ -1,7 +1,11 @@
 package cn.jxnu.nvzhuanban.ui.screens.schedule
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -33,7 +37,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.layout
@@ -252,9 +261,11 @@ private fun DayColumn(
     Box(
         modifier = modifier
             .sectionHeight(SECTIONS, sectionHeightDp)
+            // 今列整列淡色高亮 + 圆角：视觉上像一列微微浮起的卡片，比纯直角色块柔和
             .background(
-                if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
+                if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f)
                 else Color.Transparent,
+                shape = RoundedCornerShape(12.dp),
             )
             .padding(horizontal = 2.dp),
     ) {
@@ -313,6 +324,21 @@ private fun CourseCard(
         if (highlightTag != null) append("，$highlightTag")
     }
 
+    // 「上课中/下节」白描边做呼吸动画：动画值只在 drawBehind（draw 阶段）里读取，
+    // 逐帧只重绘这一张卡，不触发任何重组——与捏合缩放的布局期读高度是同一套纪律。
+    val highlightPulse = if (highlightTag != null) {
+        val transition = rememberInfiniteTransition(label = "coursePulse")
+        transition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.35f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "coursePulseAlpha",
+        )
+    } else null
+
     Box(
         modifier = Modifier
             .offset { IntOffset(0, (sectionHeightDp() * (course.startSection - 1)).dp.roundToPx()) }
@@ -322,8 +348,19 @@ private fun CourseCard(
             .clip(RoundedCornerShape(10.dp))
             .background(cardColor)
             .let { base ->
-                if (highlightTag != null) {
-                    base.border(2.dp, Color.White, RoundedCornerShape(10.dp))
+                if (highlightPulse != null) {
+                    base.drawBehind {
+                        // clip 会裁掉边界以外的绘制，Stroke 又是沿路径居中——不内缩半个线宽
+                        // 的话外侧 1dp 会被裁掉，实际只剩 1dp。按半线宽内缩画满 2dp。
+                        val stroke = 2.dp.toPx()
+                        drawRoundRect(
+                            color = Color.White.copy(alpha = highlightPulse.value),
+                            topLeft = Offset(stroke / 2f, stroke / 2f),
+                            size = Size(size.width - stroke, size.height - stroke),
+                            style = Stroke(width = stroke),
+                            cornerRadius = CornerRadius(10.dp.toPx() - stroke / 2f),
+                        )
+                    }
                 } else base
             }
             .clickable(onClick = onClick)

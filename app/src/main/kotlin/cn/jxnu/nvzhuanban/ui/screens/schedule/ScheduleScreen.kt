@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,8 +31,6 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +39,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -55,6 +56,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -564,19 +568,57 @@ private fun WeekChips(
     ) {
         items(count = total) { idx ->
             val week = idx + 1
-            FilterChip(
-                selected = week == selected,
-                onClick = { onSelect(week) },
-                label = {
-                    Text(
-                        text = if (week == currentWeek) "第 $week 周·本周" else "第 $week 周",
+            val isSelected = week == selected
+            val isCurrent = week == currentWeek
+            // 紧凑数字药丸替代旧 FilterChip「第 N 周·本周」：宽度减半，一屏可见 7~8 个周。
+            // 「本周」信息降级为数字下方的小字下标，仍然一眼可辨。
+            // 点击/语义挂在外层 Box 上并用 minimumInteractiveComponentSize 撑到 48dp
+            // 最小触达（旧 FilterChip 自带该保障），内层只负责紧凑的视觉药丸。
+            Box(
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .selectable(
+                        selected = isSelected,
+                        role = Role.Button,
+                        onClick = { onSelect(week) },
                     )
-                },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            )
+                    .semantics {
+                        contentDescription = if (isCurrent) "第 $week 周，本周" else "第 $week 周"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            when {
+                                isSelected -> MaterialTheme.colorScheme.primary
+                                isCurrent -> MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                else -> MaterialTheme.colorScheme.surfaceContainerLow
+                            },
+                        )
+                        .padding(horizontal = 13.dp, vertical = 5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = week.toString(),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = if (isCurrent) "本周" else "周",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = when {
+                            isSelected -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                            isCurrent -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        fontWeight = if (isCurrent && !isSelected) FontWeight.SemiBold else null,
+                    )
+                }
+            }
         }
     }
 }
