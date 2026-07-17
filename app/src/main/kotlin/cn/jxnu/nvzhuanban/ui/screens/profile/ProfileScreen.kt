@@ -179,21 +179,14 @@ fun ProfileScreen(
         }
     }
 
-    // 大标题随滚动折叠：展开时「我的」是大字号页头，上滑内容时收缩成常规 TopAppBar。
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = { Text(stringResource(R.string.profile_title)) },
                 actions = {
                     RefreshIconButton(isRefreshing = isRefreshing, onClick = viewModel::refresh)
                 },
-                scrollBehavior = scrollBehavior,
-                colors = TopAppBarDefaults.largeTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surface,
-                ),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
