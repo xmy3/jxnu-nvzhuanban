@@ -84,9 +84,9 @@ internal fun WeekEditorSheet(
         ) {
             PresetChip("全选") { selected = defaultAll }
             PresetChip("1-8") { selected = (1..minOf(8, totalWeeks)).toSet() }
-            // 慕课：江师大慕课课程固定在第 14-15 周排课
+            // 慕课：江师大慕课课程排在第 1-2 周与第 14-15 周，共 4 周
             PresetChip("慕课") {
-                selected = (14..15).filter { it in 1..totalWeeks }.toSet()
+                selected = ((1..2) + (14..15)).filter { it in 1..totalWeeks }.toSet()
             }
         }
         Spacer(Modifier.height(14.dp))
