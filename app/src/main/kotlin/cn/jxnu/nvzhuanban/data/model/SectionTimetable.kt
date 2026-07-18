@@ -37,4 +37,10 @@ object SectionTimetable {
     /** 第 [section] 节的显示开始时间，如 `"14:00"`。 */
     fun startTimeLabel(section: Int): String =
         startTimes[(section - 1).coerceIn(startTimes.indices)]
+
+    /** 第 [section] 节的显示结束时间，如 `"14:40"`（开始时间 + [DURATION_MINUTES] 分钟）。 */
+    fun endTimeLabel(section: Int): String {
+        val mins = endMinutes(section)
+        return "${(mins / 60).toString().padStart(2, '0')}:${(mins % 60).toString().padStart(2, '0')}"
+    }
 }

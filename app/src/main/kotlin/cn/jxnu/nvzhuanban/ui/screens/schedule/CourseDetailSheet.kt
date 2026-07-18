@@ -255,7 +255,7 @@ private fun MetaTag(text: String) {
 }
 
 private fun sectionTimeRange(startSection: Int, endSection: Int): String =
-    "${SectionTimetable.startTimeLabel(startSection)}–${SectionTimetable.startTimeLabel(endSection)}"
+    "${SectionTimetable.startTimeLabel(startSection)}–${SectionTimetable.endTimeLabel(endSection)}"
 
 /**
  * 把上课周列表压缩成可读字符串：
