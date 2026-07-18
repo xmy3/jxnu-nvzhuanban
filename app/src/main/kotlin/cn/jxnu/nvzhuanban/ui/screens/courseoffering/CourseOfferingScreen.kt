@@ -1,5 +1,11 @@
 package cn.jxnu.nvzhuanban.ui.screens.courseoffering
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +24,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -46,6 +54,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -71,6 +80,9 @@ private const val VALUE_UNRESTRICTED = "不限"
  * 结果表列由教务网服务端决定（表头驱动渲染，见 [cn.jxnu.nvzhuanban.data.model.CourseOfferingTable]）。
  * 「查询」要求至少给一个**收敛性**条件（学院≠不限，或任一文本框非空）——全不限会把全校
  * 一学期的开课整表拉回来，响应大且对教务网不友好。
+ *
+ * 筛选表单区可折叠（折叠头常驻：标题 + 生效条件摘要 + 开合箭头，点击切换）：正常进入默认
+ * 展开；带预填跳入默认收起——进屏即自动查询，先看结果，要改条件再展开。
  *
  * @param prefillTeacher 从课表「点教师」带入的教师姓名；非空时进屏预填并在表单就绪后自动查询。
  * @param prefillClassroom 从课表「点教室」带入的教室号；非空时同上。二者一般至多有一个非空。
@@ -145,6 +157,11 @@ private fun FormAndResults(
     var classroom by rememberSaveable { mutableStateOf(prefillClassroom) }
     var courseName by rememberSaveable { mutableStateOf("") }
     var teacherName by rememberSaveable { mutableStateOf(prefillTeacher) }
+    // 筛选区折叠态：从课表带条件跳入（有预填）时默认收起——进屏即自动查询，用户要的是结果，
+    // 展开的表单反而把结果顶出屏；「我的」正常进入默认展开。此后由用户点击开合，跨旋转保留。
+    var filtersExpanded by rememberSaveable {
+        mutableStateOf(prefillTeacher.isBlank() && prefillClassroom.isBlank())
+    }
     val keyboard = LocalSoftwareKeyboardController.current
 
     val effectiveSemester = semesterValue ?: form.semesters.firstOrNull()?.value.orEmpty()
@@ -191,82 +208,133 @@ private fun FormAndResults(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DropdownField(
-                        label = "学期",
-                        options = form.semesters,
-                        selectedValue = effectiveSemester,
-                        onSelect = { semesterValue = it.value },
-                        modifier = Modifier.weight(1f),
-                    )
-                    DropdownField(
-                        label = "学院",
-                        options = form.colleges,
-                        selectedValue = collegeValue,
-                        onSelect = { collegeValue = it.value },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DropdownField(
-                        label = "星期",
-                        options = form.weeks,
-                        selectedValue = weekValue,
-                        onSelect = { weekValue = it.value },
-                        modifier = Modifier.weight(1f),
-                    )
-                    DropdownField(
-                        label = "节次",
-                        options = form.sections,
-                        selectedValue = sectionValue,
-                        onSelect = { sectionValue = it.value },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = courseName,
-                    onValueChange = { courseName = it },
-                    label = { Text("课程名称（可模糊）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = classroom,
-                        onValueChange = { classroom = it },
-                        label = { Text("教室号") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = teacherName,
-                        onValueChange = { teacherName = it },
-                        label = { Text("教师姓名") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { submit() }),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = submit,
-                    enabled = hasCriteria && resultState !is CourseOfferingResultState.Loading,
-                    modifier = Modifier.fillMaxWidth(),
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { filtersExpanded = !filtersExpanded }
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(if (resultState is CourseOfferingResultState.Loading) "查询中…" else "查询")
-                }
-                if (!hasCriteria) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = "请先选择学院，或填写 课程 / 教室 / 教师 任一条件",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "筛选条件",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        if (!filtersExpanded) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = criteriaSummary(
+                                    form = form,
+                                    collegeValue = collegeValue,
+                                    weekValue = weekValue,
+                                    sectionValue = sectionValue,
+                                    classroom = classroom,
+                                    courseName = courseName,
+                                    teacherName = teacherName,
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = if (filtersExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                        contentDescription = if (filtersExpanded) "收起筛选" else "展开筛选",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp),
                     )
+                }
+                // 显式纵向展开/收起（同 TrainingPlanSummary）：默认转场是斜向 expandIn/shrinkOut，
+                // 观感像从角落挤出来；限定竖直方向 + 淡入淡出才是「下拉抽屉」的正常观感。
+                AnimatedVisibility(
+                    visible = filtersExpanded,
+                    enter = fadeIn(animationSpec = tween(200)) +
+                        expandVertically(animationSpec = tween(250), expandFrom = Alignment.Top),
+                    exit = fadeOut(animationSpec = tween(150)) +
+                        shrinkVertically(animationSpec = tween(250), shrinkTowards = Alignment.Top),
+                ) {
+                    Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DropdownField(
+                                label = "学期",
+                                options = form.semesters,
+                                selectedValue = effectiveSemester,
+                                onSelect = { semesterValue = it.value },
+                                modifier = Modifier.weight(1f),
+                            )
+                            DropdownField(
+                                label = "学院",
+                                options = form.colleges,
+                                selectedValue = collegeValue,
+                                onSelect = { collegeValue = it.value },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DropdownField(
+                                label = "星期",
+                                options = form.weeks,
+                                selectedValue = weekValue,
+                                onSelect = { weekValue = it.value },
+                                modifier = Modifier.weight(1f),
+                            )
+                            DropdownField(
+                                label = "节次",
+                                options = form.sections,
+                                selectedValue = sectionValue,
+                                onSelect = { sectionValue = it.value },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = courseName,
+                            onValueChange = { courseName = it },
+                            label = { Text("课程名称（可模糊）") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = classroom,
+                                onValueChange = { classroom = it },
+                                label = { Text("教室号") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlinedTextField(
+                                value = teacherName,
+                                onValueChange = { teacherName = it },
+                                label = { Text("教师姓名") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(onSearch = { submit() }),
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = submit,
+                            enabled = hasCriteria && resultState !is CourseOfferingResultState.Loading,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (resultState is CourseOfferingResultState.Loading) "查询中…" else "查询")
+                        }
+                        if (!hasCriteria) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = "请先选择学院，或填写 课程 / 教室 / 教师 任一条件",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -286,6 +354,33 @@ private fun FormAndResults(
             }
         }
     }
+}
+
+/**
+ * 折叠头里的一行条件摘要：只列会影响查询的项——学期恒有不列，「不限」的下拉与空文本框跳过。
+ * 下拉项用教务网 label 原文（学院名 / 星期一 / 第12节，自带语义无需前缀）；文本项加字段名前缀。
+ * 顺序与展开表单一致。全空返回占位提示。
+ */
+private fun criteriaSummary(
+    form: CourseOfferingForm,
+    collegeValue: String,
+    weekValue: String,
+    sectionValue: String,
+    classroom: String,
+    courseName: String,
+    teacherName: String,
+): String {
+    fun labelOf(options: List<FormOption>, value: String) =
+        options.firstOrNull { it.value == value }?.label ?: value.trim()
+    val parts = buildList {
+        if (collegeValue != VALUE_UNRESTRICTED) add(labelOf(form.colleges, collegeValue))
+        if (weekValue != VALUE_UNRESTRICTED) add(labelOf(form.weeks, weekValue))
+        if (sectionValue != VALUE_UNRESTRICTED) add(labelOf(form.sections, sectionValue))
+        if (courseName.isNotBlank()) add("课程 ${courseName.trim()}")
+        if (classroom.isNotBlank()) add("教室 ${classroom.trim()}")
+        if (teacherName.isNotBlank()) add("教师 ${teacherName.trim()}")
+    }
+    return if (parts.isEmpty()) "未设置条件" else parts.joinToString(" · ")
 }
 
 @Composable
