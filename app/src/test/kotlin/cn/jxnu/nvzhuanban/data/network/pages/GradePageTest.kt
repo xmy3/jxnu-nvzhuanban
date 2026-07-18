@@ -73,6 +73,16 @@ class GradePageTest {
     }
 
     @Test
+    fun `parses negative standard score`() {
+        // 标准分是 Z-score 风格、可为负（见 CLAUDE.md 领域约定）；负号绝不能在 toFloat 前被清洗掉
+        val parsed = GradePage.parse(FIXTURE)
+        val physics = parsed.semesters
+            .first { it.semester == "24-25第2学期" }
+            .grades.first { it.courseCode == "PH101" }
+        assertEquals(-0.30f, physics.gpa!!, 0.0001f)
+    }
+
+    @Test
     fun `skips header row that starts with 考试时间`() {
         val parsed = GradePage.parse(FIXTURE)
         val allCodes = parsed.semesters.flatMap { it.grades }.map { it.courseCode }

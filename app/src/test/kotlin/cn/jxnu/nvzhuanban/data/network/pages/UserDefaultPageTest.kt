@@ -1,6 +1,7 @@
 package cn.jxnu.nvzhuanban.data.network.pages
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -52,6 +53,28 @@ class UserDefaultPageTest {
     fun `grade is zero when studentId not numeric prefix`() {
         val profile = UserDefaultPage.parse("BADID", FIXTURE_NORMAL)
         assertEquals(0, profile.grade)
+    }
+
+    @Test
+    fun `accepts fullwidth parentheses and comma`() {
+        // 教务网换主题时偶尔渲染全角括号 / 全角逗号（WELCOME 注释声称兼容，这里锁死）
+        val html = """
+            <html><body>
+            <span id="lblUserInfor">欢迎您，（2024050001，Student） 张三</span>
+            </body></html>
+        """.trimIndent()
+        val profile = UserDefaultPage.parse("", html)
+        assertEquals("2024050001", profile.studentId)
+        assertEquals("张三", profile.name)
+    }
+
+    @Test
+    fun `extractStudentId returns id when logged in and null on anonymous shell`() {
+        // SSO 续票用它判「是否真的已登录」：匿名壳页解不出学号必须返回 null，
+        // 否则半死会话会被当成续票成功放行
+        assertEquals("20250101", UserDefaultPage.extractStudentId(FIXTURE_NORMAL))
+        assertNull(UserDefaultPage.extractStudentId("<html><body><p>门户壳页，无欢迎横幅</p></body></html>"))
+        assertNull(UserDefaultPage.extractStudentId(""))
     }
 
     @Test

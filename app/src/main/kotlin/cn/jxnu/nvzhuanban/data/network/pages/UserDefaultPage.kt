@@ -68,7 +68,7 @@ object UserDefaultPage {
         )
     }
 
-    /** 学号前 4 位通常是入学年份，例如 `2024050001` → 2025 级。 */
+    /** 学号前 4 位通常是入学年份，例如 `2024050001` → 2024 级。 */
     private fun inferGradeFromStudentId(studentId: String): Int {
         return studentId.take(4).toIntOrNull() ?: 0
     }

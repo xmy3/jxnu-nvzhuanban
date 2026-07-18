@@ -215,6 +215,20 @@ class SchedulePageTest {
         assertTrue("className 不应为空", c.className.isNotBlank())
     }
 
+    @Test
+    fun `inferType marks lab by name keyword or X-building and online by mooc keywords`() {
+        val parsed = SchedulePage.parse(TYPE_FIXTURE)
+        val byName = parsed.courses.associateBy { it.name }
+        // 名称含「实验」→ LAB
+        assertEquals(CourseType.LAB, byName.getValue("数据结构（实验）").type)
+        // 名称无关键词但教室在 X 楼（瑶湖实验楼）→ LAB
+        assertEquals(CourseType.LAB, byName.getValue("程序设计实训").type)
+        // 「慕课」→ ONLINE
+        assertEquals(CourseType.ONLINE, byName.getValue("药物常识（慕课）").type)
+        // 英文 MOOC 大小写不敏感 → ONLINE
+        assertEquals(CourseType.ONLINE, byName.getValue("创新创业mooc").type)
+    }
+
     private companion object {
         val TEACHER_PREFIX_FIXTURE = """
             <html><body>
@@ -281,6 +295,36 @@ class SchedulePageTest {
                 <option value="2025\9\1 0:00:00">25-26第1学期</option>
               </select>
               <div id="_ctl1_NewKcb"><table></table></div>
+            </body></html>
+        """.trimIndent()
+
+        // 覆盖 inferType 的 LAB / ONLINE 分支：名称关键词、X 楼位置兜底、MOOC 大小写
+        val TYPE_FIXTURE = """
+            <html><body>
+              <input type="hidden" name="__VIEWSTATE" value="V" />
+              <input type="hidden" name="__VIEWSTATEGENERATOR" value="G" />
+              <input type="hidden" name="__EVENTVALIDATION" value="E" />
+              <select id="_ctl1_ddlSterm">
+                <option value="2026\3\1 0:00:00" selected="selected">25-26第2学期</option>
+              </select>
+              <div id="_ctl1_NewKcb">
+                <table>
+                  <tr>
+                    <td bgcolor="#cccccc">节</td>
+                    <td bgcolor="#00ccff">星期一</td>
+                    <td bgcolor="#00ccff">星期二</td>
+                    <td bgcolor="#00ccff">星期三</td>
+                    <td bgcolor="#00ccff">星期四</td>
+                  </tr>
+                  <tr>
+                    <td bgcolor="#cccccc">1</td>
+                    <td bgcolor="#FFFFCC"><div>数据结构（实验）<br>( W2101 )<br>计科24-1班</div></td>
+                    <td bgcolor="#FFFFCC"><div>程序设计实训<br>( X4313e )<br>计科24-1班</div></td>
+                    <td bgcolor="#FFFFCC"><div>药物常识（慕课）<br>( 线上 )<br>计科24-1班</div></td>
+                    <td bgcolor="#FFFFCC"><div>创新创业mooc<br>( W2102 )<br>计科24-1班</div></td>
+                  </tr>
+                </table>
+              </div>
             </body></html>
         """.trimIndent()
 

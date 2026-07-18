@@ -188,6 +188,54 @@ class ArticleDetailPageTest {
     }
 
     @Test
+    fun `ul and ol list items become bulleted paragraphs`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-06-01 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <ul><li>第一条注意事项</li><li>第二条注意事项</li></ul>
+                  <ol><li>有序第一项</li></ol>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val paragraphTexts = parsed.blocks
+            .filterIsInstance<ArticleBlock.Paragraph>()
+            .map { p -> p.runs.filterIsInstance<InlineRun.Text>().joinToString("") { it.text } }
+        val bulleted = paragraphTexts.filter { it.startsWith("• ") }
+        assertEquals("每个 li 应各成一段并带「• 」前缀: $paragraphTexts", 3, bulleted.size)
+        assertTrue(bulleted.any { "第一条注意事项" in it })
+        assertTrue(bulleted.any { "第二条注意事项" in it })
+        assertTrue(bulleted.any { "有序第一项" in it })
+    }
+
+    @Test
+    fun `download aspx link is attachment regardless of extension`() {
+        // isAttachment 的另一形态：不带文件后缀、走 Download.aspx 的附件链接
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-06-01 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <p><a href="/Portal/Download.aspx?fileid=123">考试安排明细</a></p>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val attachment = parsed.blocks.filterIsInstance<ArticleBlock.Attachment>().firstOrNull()
+        assertNotNull("Download.aspx 链接应识别为附件: ${parsed.blocks}", attachment)
+        assertEquals("考试安排明细", attachment!!.name)
+        assertEquals("https://jwc.jxnu.edu.cn/Portal/Download.aspx?fileid=123", attachment.url)
+    }
+
+    @Test
     fun `returns empty ArticleDetail when no main-content`() {
         val parsed = ArticleDetailPage.parse("<html><body><p>hi</p></body></html>", baseUri)
         assertEquals("", parsed.title)
