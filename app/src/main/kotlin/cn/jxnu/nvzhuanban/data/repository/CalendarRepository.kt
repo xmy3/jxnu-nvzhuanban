@@ -37,7 +37,9 @@ class CalendarRepository {
         fetchNow().also { cached = it }
     }
 
-    suspend fun clearCache() = mutex.withLock {
+    // 必须无锁、非 suspend（cached 是 @Volatile）：一旦日后被接进 AuthRepository 持有
+    // authMutex 的清理链，加锁版会复活 repo.mutex ⇄ authMutex 跨锁死锁（见 CLAUDE.md）。
+    fun clearCache() {
         cached = null
     }
 

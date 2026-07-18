@@ -23,7 +23,8 @@ import java.util.concurrent.TimeUnit
  * 不共享 —— OkHttp 默认值对每小时几次的更新检查完全够用，多一份内存换 zero coupling。
  *
  * GitHub API 要求：
- *  - **User-Agent 必须设**（否则 403），用 App 名 + 版本号
+ *  - **User-Agent 必须设**（否则 403），固定 App 名即可满足（GitHub 只要求非空可识别 UA；
+ *    本项目未启用 BuildConfig，不为 UA 引入版本号读取链）
  *  - `Accept: application/vnd.github+json` 是当前稳定版媒体类型
  *  - `X-GitHub-Api-Version` 是 2022-11-28，固定
  *

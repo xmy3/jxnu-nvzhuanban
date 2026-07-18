@@ -32,6 +32,7 @@ object AnnouncementReadAnchor {
     }
 
     fun setAnchor(uniqueKey: String) {
+        if (!::sp.isInitialized) return
         if (_anchor.value == uniqueKey) return
         sp.edit().putString(KEY_ANCHOR, uniqueKey).apply()
         _anchor.value = uniqueKey

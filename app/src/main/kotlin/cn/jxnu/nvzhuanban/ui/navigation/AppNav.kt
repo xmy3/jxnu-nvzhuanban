@@ -117,7 +117,8 @@ object Routes {
 
     /** 带 articleId 参数的详情页路由；用 [announcementDetail] 构造实例。 */
     const val ANNOUNCEMENT_DETAIL = "announcement_detail/{articleId}"
-    fun announcementDetail(articleId: String) = "announcement_detail/$articleId"
+    // id 现实中恒为纯数字，encode 是与其它路由构造器统一的防御（未来 id 混入 `/` 也不破路由）。
+    fun announcementDetail(articleId: String) = "announcement_detail/${android.net.Uri.encode(articleId)}"
 
     /** 教工详情 / 教工课表：userNum 是教号 base64，可能含 `+ /`，需要 [android.net.Uri.encode]。 */
     const val TEACHER_DETAIL = "teacher_detail/{userNum}/{name}"
