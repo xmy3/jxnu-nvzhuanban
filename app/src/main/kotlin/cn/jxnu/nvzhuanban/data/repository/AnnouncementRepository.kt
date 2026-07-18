@@ -143,11 +143,12 @@ class AnnouncementRepository {
 
     /**
      * 第 1 页两阶段流式拉取。事件序列：
-     *   1. partial: 通知 + 通告 合并；
+     *   1. partial: 通知 + 通告 + 风采（best-effort）合并；
      *   2. full:    partial + 图文新闻 合并。
      *
      * 部分失败语义：
      *   - 通知 / 通告 任一失败 → 阶段 1 抛异常，整体失败；
+     *   - 风采失败 → 当空列表，不拖垮 partial（与类 KDoc 的 best-effort 约定一致）；
      *   - 通知 / 通告 成功但图文失败 → 阶段 1 正常 emit，阶段 2 抛异常。
      *     调用方可在 `catch` 里保留 partial UI（已经渲染）只静默 log 错误。
      *

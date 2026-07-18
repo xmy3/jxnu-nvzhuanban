@@ -157,7 +157,7 @@ class SchedulePageTest {
 
     @Test
     fun `parses student schedule sample (same UserControl as teacher)`() {
-        val html = sampleHtml("student_scheduel.html")
+        val html = sampleHtml("student_schedule.html")
 
         val parsed = SchedulePage.parse(html)
 

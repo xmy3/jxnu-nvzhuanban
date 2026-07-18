@@ -1,6 +1,26 @@
 # Changelog
 
-记录女专办 Android 客户端的版本变更。版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)，`versionCode` 编码规则为 `major*1000 + minor*10 + patch`（例：1.3.0 → 1030）。
+记录女专办 Android 客户端的版本变更。版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)，`versionCode` 编码规则为 `major*1000 + minor*10 + patch`（例：1.3.0 → 1030）。**边界：patch ≤ 9、minor ≤ 99**——公式只给 patch 留了个位，越界会进位撞号（如 1.2.10 与 1.3.0 同为 1030），Android 会拒绝 versionCode 不增的“升级”；逼近上限时直接升 minor / major，或先改用更宽的编码。
+
+## [未发布]
+
+全面代码审查产出的安全与修复批次。
+
+### 隐私与安全
+- **测试 fixture 彻底脱敏**：个人数据页样本（成绩 / 考试 / 课表 / 考试出分 / 补缓考）残留的真实学号、姓名、班级、任课教师姓名与联系电话全部替换为规范假数据，`__VIEWSTATE` base64 内嵌的身份信息一并清除；git 历史已同步重写。
+- 师生查询浏览历史（`people_search_history`）加入云备份 / 换机迁移排除清单。
+- 换账号登录后「显示学生头像」开关重置为默认关闭，不继承上一用户的授权。
+
+### 修复
+- 师生查询：从详情页返回或旋转屏幕后，搜索结果不再被误清空。
+- 登出时的本地清理（cookie 文件、widget 快照等）全部移到 IO 线程执行。
+- cookie 持久化对字段含制表符 / 换行的异常 cookie 加防线，避免 TSV 文件错位拆行。
+- `CalendarRepository.clearCache` 改为无锁实现，对齐全库 clearCache 纪律（消除潜在跨锁死锁隐患）。
+- 通知详情路由构造器补 `Uri.encode`；`AnnouncementReadAnchor.setAnchor` 补初始化守卫。
+
+### 其他
+- 补齐解析器测试覆盖：LAB / ONLINE 课程类型推断、通知正文 ul/ol 列表与 `Download.aspx` 附件、负标准分、全角括号用户信息。
+- README 补 v1.8.0 功能（教务风采、开课查询）；过期注释更新；CI 加并发去重；`student_scheduel.html` 更名为 `student_schedule.html`。
 
 ## [1.8.1] - 2026-07-18
 

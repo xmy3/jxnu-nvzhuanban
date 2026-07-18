@@ -40,7 +40,7 @@ class NvzhuanbanApp : Application() {
 
         // 预打开冷启动路径要读的全部 SharedPreferences 文件：getSharedPreferences 只触发各自
         // 后台线程的磁盘加载，首次 get*() 才阻塞等待。先把文件全部打开（只开不读），下面各
-        // init() 的首读大多命中已加载缓存 —— 否则「打开一个→读一个」会让 7 次文件加载在
+        // init() 的首读大多命中已加载缓存 —— 否则「打开一个→读一个」会让这批文件的加载在
         // 主线程上串行，全部叠在首帧之前。
         STARTUP_PREFS_FILES.forEach { getSharedPreferences(it, MODE_PRIVATE) }
 

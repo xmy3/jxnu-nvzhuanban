@@ -34,3 +34,7 @@ keystore.properties
 
 # Android Studio Logcat 导出文件（手动诊断时存到根目录，不入库）
 *.logcat
+
+# IDE 本机状态：部署目标选择、VCS 映射随开发机漂移，不入库
+/.idea/deploymentTargetSelector.xml
+/.idea/vcs.xml
