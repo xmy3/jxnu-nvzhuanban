@@ -72,6 +72,7 @@ import cn.jxnu.nvzhuanban.data.storage.SchedulePalette
 import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+import cn.jxnu.nvzhuanban.ui.components.UiState
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.LocalDate
@@ -80,6 +81,23 @@ import java.time.temporal.ChronoUnit
 
 internal val LEFT_LABEL_WIDTH = 36.dp
 internal val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
+/** 无课的周末列折叠成的窄占位宽度（仍显示「六/日」+竖排「无课」，把腾出的横向空间让给工作日）。 */
+internal val FOLDED_DAY_WIDTH = 22.dp
+
+/**
+ * 计算需要折叠成窄占位的星期几（整学期无课的**末尾**连续空列，从周日往前数）。
+ * 只折叠尾部空列，绝不在中间留洞：周日有课而周六无课时只折周日、周六保持正常。
+ * 折叠依据是**全学期**课表（非当前周），避免逐周切换时列宽反复跳动。
+ * 空课表（加载中/无数据）返回空集，不折叠。
+ */
+internal fun computeFoldedDays(courses: List<Course>): Set<Int> {
+    if (courses.isEmpty()) return emptySet()
+    val folded = mutableSetOf<Int>()
+    for (day in 7 downTo 1) {
+        if (courses.none { it.weekday == day }) folded.add(day) else break
+    }
+    return folded
+}
 
 /**
  * 离线提示条：当 [ScheduleScreenState.isOffline] 为真（本次拉取失败、展示的是磁盘缓存）时，
@@ -260,10 +278,16 @@ fun ScheduleScreen(
             state.vacation?.let { info ->
                 VacationBanner(info, today) { value -> viewModel.selectSemester(value) }
             }
+            // 整学期无课的末尾周末列折叠成窄占位，把横向空间让给工作日（列变宽→课程/教室字号更大）。
+            // 取自 state.data 的全量课表，不随选中周变化，列宽跨周稳定。
+            val foldedDays = remember(state.data) {
+                (state.data as? UiState.Success)?.let { computeFoldedDays(it.data) } ?: emptySet()
+            }
             WeekdayHeader(
                 todayWeekday = todayWeekday,
                 semesterStart = state.semesterStart,
                 selectedWeek = state.selectedWeek,
+                foldedDays = foldedDays,
             )
             if (state.isOffline) OfflineBanner()
             StateScaffold(
@@ -298,6 +322,7 @@ fun ScheduleScreen(
                         ScheduleGrid(
                             courses = visibleCourses,
                             todayWeekday = todayWeekday,
+                            foldedDays = foldedDays,
                             onCourseClick = { selectedCourse = it },
                             onSwipeLeft = onSwipeLeft,
                             onSwipeRight = onSwipeRight,
@@ -648,6 +673,7 @@ private fun WeekdayHeader(
     todayWeekday: Int,
     semesterStart: LocalDate?,
     selectedWeek: Int,
+    foldedDays: Set<Int>,
 ) {
     // 当前 week 的周一 = 第 1 周的周一（SemesterPhase.weekOneMonday，开学名义日对齐最近周一）
     // 加 (week-1)*7 天。必须与 SemesterPhase.at 的周坐标同源，「今」列高亮那格的日期才恰好是今天
@@ -669,9 +695,11 @@ private fun WeekdayHeader(
         WEEKDAY_LABELS.forEachIndexed { idx, label ->
             val weekday = idx + 1
             val isToday = weekday == todayWeekday
+            val isFolded = weekday in foldedDays
             val date = weekMonday?.plusDays((weekday - 1).toLong())
             Column(
-                modifier = Modifier.weight(1f),
+                // 折叠列固定窄宽，工作日 weight 平分剩余空间 → 列变宽、课程与教室字号更大
+                modifier = if (isFolded) Modifier.width(FOLDED_DAY_WIDTH) else Modifier.weight(1f),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
@@ -680,7 +708,8 @@ private fun WeekdayHeader(
                     fontWeight = if (isToday) FontWeight.Bold else FontWeight.SemiBold,
                     color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 )
-                if (date != null) {
+                // 折叠列不显示日期（宽度放不下 M/d），改在网格里竖排「无课」占位
+                if (date != null && !isFolded) {
                     Text(
                         text = date.format(dateFormatter),
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),

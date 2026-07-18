@@ -17,7 +17,7 @@ object ScheduleHeightPrefs {
 
     const val MIN_DP = 40f
     const val MAX_DP = 96f
-    const val DEFAULT_DP = 60f
+    const val DEFAULT_DP = 68f
 
     private const val PREF_NAME = "schedule_height_prefs"
     private const val KEY_DP = "section_dp"
