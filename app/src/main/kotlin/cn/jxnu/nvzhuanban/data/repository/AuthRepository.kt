@@ -13,6 +13,7 @@ import cn.jxnu.nvzhuanban.data.network.ReauthOutcome
 import cn.jxnu.nvzhuanban.data.network.SecureCredentialStore
 import cn.jxnu.nvzhuanban.data.network.pages.UserDefaultPage
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
+import cn.jxnu.nvzhuanban.data.storage.AvatarPrefs
 import cn.jxnu.nvzhuanban.data.storage.CourseOverridesStore
 import cn.jxnu.nvzhuanban.data.storage.PeopleSearchHistoryStore
 import cn.jxnu.nvzhuanban.data.widget.WidgetSnapshotStore
@@ -119,6 +120,9 @@ class AuthRepository private constructor(
         if (previousUser != null && previousUser != username) {
             // 清理链路含 SharedPreferences / widget 快照文件删除，切 IO 防主线程卡顿
             withContext(Dispatchers.IO) { clearAllUserDataOnSignOut() }
+            // 「显示学生头像」是带隐私语义的开关（默认 false）：换号后不让新用户继承上一用户
+            // 的授权、静默发起头像请求，由新用户自己重新勾选。同账号重登不受影响。
+            AvatarPrefs.setShowAvatar(false)
         }
         storage.lastLoggedUser = username
         // 凭证落盘是 Tink 加密 + fsync 的同步写（save 用 commit 才能拿到成败位），必须切 IO，
@@ -223,6 +227,8 @@ class AuthRepository private constructor(
         val previousUser = storage.lastLoggedUser
         if (previousUser != null && previousUser != profile.studentId) {
             withContext(Dispatchers.IO) { clearAllUserDataOnSignOut() }
+            // 同 onLoginSuccess：换号后头像开关回到默认关，不继承上一用户的授权。
+            AvatarPrefs.setShowAvatar(false)
         }
         storage.lastLoggedUser = profile.studentId
         // cookie 直接有效本身就是"自动通道成功"，重置 throttle
@@ -235,9 +241,14 @@ class AuthRepository private constructor(
     private fun degradedProfile(username: String): UserProfile = UserDefaultPage.parse(username, "")
 
     suspend fun logout() = authMutex.withLock {
-        cas.logout()
-        creds.clear()
-        clearAllUserDataOnSignOut()
+        // 与 onLoginSuccess 的换号清理同款切 IO：cas.logout 删 cookie 文件、清理链删 widget
+        // 快照文件，都是磁盘操作；调用方 ProfileViewModel 的 NonCancellable 只换 Job 不换
+        // 调度器，不包 IO 这些就全落在主线程。
+        withContext(Dispatchers.IO) {
+            cas.logout()
+            creds.clear()
+            clearAllUserDataOnSignOut()
+        }
         _state.value = AuthState.LoggedOut
     }
 
@@ -330,7 +341,7 @@ class AuthRepository private constructor(
 
     /**
      * 把所有"上一用户"留下的派生数据清空：
-     *  - 6 个 Repository 单例的内存缓存（schedule/grade/test-grade/exam/announcement/audit）
+     *  - 全部业务 Repository 单例的内存缓存（见 [clearRepositoryCaches]，新增 repo 记得挂进去）
      *  - 课程周次本地覆盖（CourseOverridesStore）
      *  - 通知已读锚点（AnnouncementReadAnchor）—— 否则下一用户继承上一用户的"最后已读"
      *  - 桌面 widget snapshot 文件 —— 否则锁屏小部件还在显示上一用户的今日课表

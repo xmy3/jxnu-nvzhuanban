@@ -252,7 +252,12 @@ class PersistentCookieJar internal constructor(filesDir: File) : CookieJar {
         val snapshot: List<Cookie> = lock.read {
             byDomain.values.flatMap { it.toList() }
         }
-        val text = snapshot.joinToString("\n") { serializeCookieLine(it) }
+        // TSV 行格式防线：字段含 \t/\n/\r 的 cookie 无法无损序列化（写盘会错位 / 拆行，重载时
+        // 静默丢失或读出脏值），跳过持久化、仅内存生效。真实 jwc/CAS cookie 是 token 字符集，
+        // 正常永远不会命中；这是对服务端异常输出的兜底。
+        val text = snapshot
+            .filter { c -> listOf(c.name, c.value, c.domain, c.path).none { it.contains('\t') || it.contains('\n') || it.contains('\r') } }
+            .joinToString("\n") { serializeCookieLine(it) }
         synchronized(persistLock) {
             // 二次校验：临门一脚发现已被 clearAll，立即放弃，不要把刚清的快照写回去
             if (stopped || generation != persistGeneration) return
