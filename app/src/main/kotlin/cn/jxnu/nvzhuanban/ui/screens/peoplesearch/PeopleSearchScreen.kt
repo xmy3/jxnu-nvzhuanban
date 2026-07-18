@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -62,6 +63,7 @@ import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.ErrorState
 import cn.jxnu.nvzhuanban.ui.components.LoadingState
+import kotlinx.coroutines.flow.drop
 
 /**
  * 师生统一查询页。
@@ -99,9 +101,13 @@ fun PeopleSearchScreen(
         if (state is PeopleSearchUiState.Initial && history.isEmpty()) focusRequester.requestFocus()
     }
 
-    // 切换教工 / 学生时清掉上一种结果。首次 Composition 触发的初始调用是 no-op（state 已是 Initial）。
-    LaunchedEffect(type) {
-        viewModel.clearResults()
+    // 切换教工 / 学生时清掉上一种结果。snapshotFlow + drop(1)：只在 type 真正变化时清——
+    // 若直接 LaunchedEffect(type)，从详情页返回 / 旋转屏幕时 effect 重新进组合会重跑，
+    // 把 VM 里还活着的搜索结果误清成 Initial（与上方「返回时 VM 还持有结果」的意图冲突）。
+    LaunchedEffect(Unit) {
+        snapshotFlow { type }
+            .drop(1)
+            .collect { viewModel.clearResults() }
     }
 
     val submit: () -> Unit = {
