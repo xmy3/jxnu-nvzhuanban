@@ -99,9 +99,168 @@ object ArticleDetailPage {
         val body = outer.children().firstOrNull { it.id() == "main-content" }
             ?: return ArticleDetail(title, postedAt, emptyList())
 
-        val blocks = BodyWalker().walk(body)
+        val blocks = stripAttachmentWrappers(BodyWalker().walk(body))
         return ArticleDetail(title, postedAt, blocks)
     }
+
+    /**
+     * jwc CMS 会在正文末尾追加「【上传的文件：<a>xxx.pdf</a>】」外壳。附件 `<a>` 被抽成独立的
+     * [ArticleBlock.Attachment] 后，外壳文字断成「【上传的文件：」和「】」两个孤立段落，渲染出来
+     * 像残缺文本。附件卡片自带图标语义，这层外壳直接剥掉。
+     *
+     * 两重防误伤（缺一不剥，未命中一律原样保留＝改动前行为）：
+     * - **成对命中**：附件串前一段以未闭合的「【…」结尾，且后一段以「】」开头（允许前导纯标点，
+     *   兼容「。】」「、】」这类尾随分隔符）；
+     * - **样板词白名单**：opener 残片必须含「上传的文件」。纯结构判定会把作者手写的
+     *   「【申报表：<a>…</a>】」里的标签一并删掉（信息丢失）；白名单代价是 CMS 未来改措辞时
+     *   剥离静默失效、退回残片显示，属可接受降级。
+     *
+     * 附件之间夹的纯分隔符段（如「、」）在命中外壳时一并清掉。
+     */
+    private fun stripAttachmentWrappers(blocks: List<ArticleBlock>): List<ArticleBlock> {
+        val out = mutableListOf<ArticleBlock>()
+        var i = 0
+        while (i < blocks.size) {
+            val block = blocks[i]
+            if (block !is ArticleBlock.Attachment) {
+                out += block
+                i++
+                continue
+            }
+
+            // 收拢连续附件串 [i..end]；attachments 只收附件本身，夹在中间的分隔符段不进来——
+            // 命中外壳时 out += attachments 就把它们清掉，未命中则按原序整段搬运保留
+            var end = i
+            val attachments = mutableListOf<ArticleBlock>(block)
+            while (end + 1 < blocks.size) {
+                val next = blocks[end + 1]
+                if (next is ArticleBlock.Attachment) {
+                    attachments += next
+                    end++
+                    continue
+                }
+                if (next is ArticleBlock.Paragraph && isSeparatorParagraph(next) &&
+                    end + 2 < blocks.size && blocks[end + 2] is ArticleBlock.Attachment
+                ) {
+                    attachments += blocks[end + 2]
+                    end += 2
+                    continue
+                }
+                break
+            }
+
+            // prev 从 out 尾部取而不是 blocks[i-1]：两个外壳背靠背时（「】【上传的文件：」合成一段），
+            // 上一轮剥剩的「【上传的文件：」正好是本轮的 opener
+            val prev = out.lastOrNull() as? ArticleBlock.Paragraph
+            val next = blocks.getOrNull(end + 1) as? ArticleBlock.Paragraph
+            val strippedPrev = prev?.let(::stripTrailingOpener)
+            val strippedNext = next?.let(::stripLeadingCloser)
+            if (strippedPrev != null && strippedNext != null) {
+                out.removeAt(out.lastIndex)
+                if (strippedPrev.runs.isNotEmpty()) out += strippedPrev
+                out += attachments
+                if (strippedNext.runs.isNotEmpty()) out += strippedNext
+                i = end + 2
+            } else {
+                for (j in i..end) out += blocks[j]
+                i = end + 1
+            }
+        }
+        return out
+    }
+
+    /**
+     * CMS 外壳 opener：段落尾部未闭合的「【…上传的文件…」残片。必须含样板词「上传的文件」，
+     * 见 [stripAttachmentWrappers] 的白名单说明；`[^【】]*` 保证不会越过一对已闭合的括号往前吞。
+     */
+    private val WRAPPER_OPENER = Regex("""【[^【】]*上传的文件[^【】]*$""")
+
+    /**
+     * 命中返回剥掉残片后的段落（runs 可能为空，调用方负责丢弃空段），未命中返回 null。
+     *
+     * 匹配/剥除都作用在段落**尾部连续 Text runs 的扁平文本**上：外壳可能被内联样式拆成多个
+     * run（如「【」+ 带色的「上传的文件：」），只看最后一个 run 会漏。
+     */
+    private fun stripTrailingOpener(paragraph: ArticleBlock.Paragraph): ArticleBlock.Paragraph? {
+        val runs = paragraph.runs
+        var tailStart = runs.size
+        while (tailStart > 0 && runs[tailStart - 1] is InlineRun.Text) tailStart--
+        val tail = runs.subList(tailStart, runs.size).map { it as InlineRun.Text }
+        val tailText = tail.joinToString("") { it.text }
+        val match = WRAPPER_OPENER.find(tailText) ?: return null
+        val kept = runs.subList(0, tailStart) + takeLeadingChars(tail, match.range.first)
+        return ArticleBlock.Paragraph(trimEdgeRuns(kept))
+    }
+
+    /**
+     * closer 判定：段落开头连续 Text runs 的扁平文本里，「】」之前只允许标点/空白
+     * （兼容「。】」「、】」这类 CMS 尾随分隔符），出现任何字母数字/汉字都不算闭合段。
+     */
+    private fun stripLeadingCloser(paragraph: ArticleBlock.Paragraph): ArticleBlock.Paragraph? {
+        val runs = paragraph.runs
+        var headEnd = 0
+        while (headEnd < runs.size && runs[headEnd] is InlineRun.Text) headEnd++
+        val head = runs.subList(0, headEnd).map { it as InlineRun.Text }
+        val headText = head.joinToString("") { it.text }
+        val closerIndex = headText.indexOf('】')
+        if (closerIndex < 0) return null
+        if (headText.take(closerIndex).any { it.isLetterOrDigit() }) return null
+        val kept = dropLeadingChars(head, closerIndex + 1) + runs.subList(headEnd, runs.size)
+        return ArticleBlock.Paragraph(trimEdgeRuns(kept))
+    }
+
+    /** 连续 Text runs 按扁平字符数截断：保留前 [count] 个字符，样式跟原 run 走。 */
+    private fun takeLeadingChars(runs: List<InlineRun.Text>, count: Int): List<InlineRun> {
+        val out = mutableListOf<InlineRun>()
+        var remaining = count
+        for (run in runs) {
+            if (remaining <= 0) break
+            if (run.text.length <= remaining) {
+                out += run
+                remaining -= run.text.length
+            } else {
+                out += run.copy(text = run.text.take(remaining))
+                remaining = 0
+            }
+        }
+        // 剥完残片后裸露的尾随空白（如「请下载 【…」剩「请下载 」）顺手修掉
+        (out.lastOrNull() as? InlineRun.Text)?.let { out[out.lastIndex] = it.copy(text = it.text.trimEnd()) }
+        return out
+    }
+
+    /** 连续 Text runs 按扁平字符数截断：丢弃前 [count] 个字符，样式跟原 run 走。 */
+    private fun dropLeadingChars(runs: List<InlineRun.Text>, count: Int): List<InlineRun> {
+        val out = mutableListOf<InlineRun>()
+        var remaining = count
+        for (run in runs) {
+            if (remaining >= run.text.length) {
+                remaining -= run.text.length
+            } else {
+                out += if (remaining > 0) run.copy(text = run.text.drop(remaining)) else run
+                remaining = 0
+            }
+        }
+        (out.firstOrNull() as? InlineRun.Text)?.let { out[0] = it.copy(text = it.text.trimStart()) }
+        return out
+    }
+
+    /** 剥完残片后段落边缘可能裸露 LineBreak / 空白 Text，照 normalise 的口径修掉。 */
+    private fun trimEdgeRuns(runs: List<InlineRun>): List<InlineRun> {
+        val list = runs.toMutableList()
+        while (list.isNotEmpty() && list.first().isEdgeJunk()) list.removeAt(0)
+        while (list.isNotEmpty() && list.last().isEdgeJunk()) list.removeAt(list.lastIndex)
+        return list
+    }
+
+    private fun InlineRun.isEdgeJunk(): Boolean =
+        this is InlineRun.LineBreak || (this is InlineRun.Text && text.isBlank())
+
+    /** 附件之间的纯标点/空白段（如「、」）——不含任何字母数字/汉字才算。 */
+    private fun isSeparatorParagraph(paragraph: ArticleBlock.Paragraph): Boolean =
+        paragraph.runs.all { it is InlineRun.Text || it is InlineRun.LineBreak } &&
+            paragraph.runs.filterIsInstance<InlineRun.Text>()
+                .joinToString("") { it.text }
+                .none { it.isLetterOrDigit() }
 
     /**
      * 递归把 jwc 内层 #main-content 的子树摊平成 [ArticleBlock] 列表。

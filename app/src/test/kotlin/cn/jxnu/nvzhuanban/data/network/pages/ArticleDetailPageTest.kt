@@ -300,16 +300,274 @@ class ArticleDetailPageTest {
         val parsed = ArticleDetailPage.parse(sampleHtml("article_detail.html"), baseUri)
         val flatText = parsed.blocks
             .filterIsInstance<ArticleBlock.Paragraph>()
-            .joinToString("\n") { p ->
-                p.runs.joinToString("") {
-                    when (it) {
-                        is InlineRun.Text -> it.text
-                        is InlineRun.Link -> it.text
-                        InlineRun.LineBreak -> "\n"
-                    }
-                }
-            }
+            .joinToString("\n") { flatten(it) }
         // 「关闭窗口」位于外层 .border-top 容器里，不在内层 #main-content
         assertNull("『关闭窗口』被错误纳入正文", flatText.lineSequence().firstOrNull { "关闭窗口" in it })
     }
+
+    /**
+     * 回归：jwc CMS 在正文末尾追加「【上传的文件：<a>xxx.pdf</a>】」外壳。附件 `<a>` 被抽成
+     * 独立卡片后，「【上传的文件：」和「】」曾残留为两个孤立段落，渲染成残缺文本。
+     * fixture 末尾即这一形态，应只留附件卡片、不留外壳残片。
+     */
+    @Test
+    fun `fixture CMS attachment wrapper leaves only the attachment card`() {
+        val parsed = ArticleDetailPage.parse(sampleHtml("article_detail.html"), baseUri)
+
+        val attachments = parsed.blocks.filterIsInstance<ArticleBlock.Attachment>()
+        assertEquals("正文附件 + CMS 外壳附件共两个: $attachments", 2, attachments.size)
+        assertEquals("考试通知原文.pdf", attachments[1].name)
+        assertEquals("https://jwc.jxnu.edu.cn/files/exam_notice_2026.pdf", attachments[1].url)
+
+        val paragraphTexts = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
+        assertTrue("外壳「【上传的文件：」应被剥掉: $paragraphTexts", paragraphTexts.none { "上传的文件" in it })
+        assertTrue("孤立「】」应被剥掉: $paragraphTexts", paragraphTexts.none { "】" in it })
+        // 作者自己写的「完整名单请参见附件：」不带外壳括号，不许误伤
+        assertTrue("正文附件引导语应保留: $paragraphTexts", paragraphTexts.any { "完整名单请参见附件" in it })
+    }
+
+    @Test
+    fun `wrapper stripping keeps surrounding prose outside the brackets`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>请各单位查收。【上传的文件：<a href="../files/a.pdf">名单.pdf</a>】请于7月20日前反馈。</div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        assertEquals(1, parsed.blocks.filterIsInstance<ArticleBlock.Attachment>().size)
+
+        val paragraphTexts = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
+        assertTrue("外壳前的正文应保留: $paragraphTexts", paragraphTexts.any { it == "请各单位查收。" })
+        assertTrue("外壳后的正文应保留: $paragraphTexts", paragraphTexts.any { it == "请于7月20日前反馈。" })
+        assertTrue("括号残片不应残留: $paragraphTexts", paragraphTexts.none { "【" in it || "】" in it })
+    }
+
+    @Test
+    fun `wrapper with multiple attachments strips separators too`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>【上传的文件：<a href="../files/a.pdf">a.pdf</a>、<a href="../files/b.doc">b.doc</a><br/><a href="../files/c.xlsx">c.xlsx</a>】</div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val attachments = parsed.blocks.filterIsInstance<ArticleBlock.Attachment>()
+        assertEquals("三个附件都应保留: ${parsed.blocks}", 3, attachments.size)
+        assertEquals(listOf("a.pdf", "b.doc", "c.xlsx"), attachments.map { it.name })
+        // 外壳文字和附件间的「、」分隔符都应清掉，不留任何段落
+        assertTrue(
+            "不应残留任何段落: ${parsed.blocks}",
+            parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().isEmpty(),
+        )
+    }
+
+    @Test
+    fun `plain prose around attachment without brackets is left untouched`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>详见附件：<a href="../files/a.pdf">名单.pdf</a>敬请查收。</div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val paragraphTexts = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
+        // 单侧无括号 → 成对判定不命中 → 作者正文一个字都不动
+        assertTrue("「详见附件：」应保留: $paragraphTexts", paragraphTexts.any { it == "详见附件：" })
+        assertTrue("「敬请查收。」应保留: $paragraphTexts", paragraphTexts.any { it == "敬请查收。" })
+    }
+
+    /**
+     * 白名单负向：作者手写的「【申报表：<a>…</a>】」结构上与 CMS 外壳同构，但标签是
+     * 有信息量的正文（「申报表」不在文件名里就真丢了）——不含样板词「上传的文件」必须整段不动。
+     */
+    @Test
+    fun `author-written bracket label around attachment is not stripped`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>请下载【申报表：<a href="../files/sb.xlsx">2026年申报表.xlsx</a>】并填写。</div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val paragraphTexts = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
+        assertTrue("作者标签「请下载【申报表：」应原样保留: $paragraphTexts", paragraphTexts.any { it == "请下载【申报表：" })
+        assertTrue("「】并填写。」应原样保留: $paragraphTexts", paragraphTexts.any { it == "】并填写。" })
+    }
+
+    /** 单侧命中（opener 命中、closer 缺）也必须整段不动——钉住「成对才剥」的 && 不变量。 */
+    @Test
+    fun `opener without matching closer is left untouched`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>见【上传的文件：<a href="../files/a.pdf">a.pdf</a> 请查收</div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val paragraphTexts = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
+        assertTrue("opener 残片应原样保留: $paragraphTexts", paragraphTexts.any { it == "见【上传的文件：" })
+        assertTrue("附件后的正文应原样保留: $paragraphTexts", paragraphTexts.any { it == "请查收" })
+    }
+
+    /** WRAPPER_OPENER 的 `[^【】]*` 防越界：已闭合的「【附件1】」不许被当成 opener 往前吞。 */
+    @Test
+    fun `closed bracket pair before attachment is not swallowed as opener`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>见【附件1】：<a href="../files/a.pdf">a.pdf</a>】</div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val paragraphTexts = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
+        assertTrue("「见【附件1】：」应原样保留: $paragraphTexts", paragraphTexts.any { it == "见【附件1】：" })
+    }
+
+    /** 背靠背双外壳：中间段「】【上传的文件：」先被上一轮剥剩 opener、再供下一轮消费。 */
+    @Test
+    fun `back-to-back double wrappers both stripped`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>【上传的文件：<a href="../files/a.pdf">a.pdf</a>】【上传的文件：<a href="../files/b.doc">b.doc</a>】</div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val attachments = parsed.blocks.filterIsInstance<ArticleBlock.Attachment>()
+        assertEquals("两个外壳的附件都应保留: ${parsed.blocks}", listOf("a.pdf", "b.doc"), attachments.map { it.name })
+        assertTrue(
+            "双外壳应剥净、不残留任何段落: ${parsed.blocks}",
+            parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().isEmpty(),
+        )
+    }
+
+    /** 外壳被内联样式拆成多 run（「【」+ 带色「上传的文件：」）时也要能剥——匹配基于扁平文本。 */
+    @Test
+    fun `wrapper split across styled runs is still stripped`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>【<span style="color:#FF0000">上传的文件：</span><a href="../files/x.pdf">x.pdf</a>】</div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        assertEquals(1, parsed.blocks.filterIsInstance<ArticleBlock.Attachment>().size)
+        assertTrue(
+            "跨 run 外壳应剥净: ${parsed.blocks}",
+            parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().isEmpty(),
+        )
+    }
+
+    /** 闭合段首的纯标点（「。】」这类尾随分隔符）不阻断剥离；带实质文字（「并填写。】」）则阻断。 */
+    @Test
+    fun `closer with leading punctuation still strips, with real text does not`() {
+        fun bodyWith(inner: String) = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">$inner</div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val punctuation = ArticleDetailPage.parse(
+            bodyWith("""<div>【上传的文件：<a href="../files/a.pdf">a.pdf</a>。】</div>"""),
+            baseUri,
+        )
+        assertTrue(
+            "「。】」应连标点一起剥净: ${punctuation.blocks}",
+            punctuation.blocks.filterIsInstance<ArticleBlock.Paragraph>().isEmpty(),
+        )
+
+        val realText = ArticleDetailPage.parse(
+            bodyWith("""<div>【上传的文件：<a href="../files/a.pdf">a.pdf</a>如有疑问联系教务处】</div>"""),
+            baseUri,
+        )
+        val texts = realText.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
+        assertTrue("】前有实质文字时应整段不动: $texts", texts.any { it == "【上传的文件：" })
+        assertTrue("实质文字应原样保留: $texts", texts.any { it == "如有疑问联系教务处】" })
+    }
+
+    /** 「】」剥掉后，闭合段里尾随的 Link 等非 Text run 要作为独立段落存活。 */
+    @Test
+    fun `runs after the closer bracket survive stripping`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div>【上传的文件：<a href="../files/a.pdf">a.pdf</a>】<a href="https://ex.com/x">详情</a></div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        assertEquals(1, parsed.blocks.filterIsInstance<ArticleBlock.Attachment>().size)
+        val links = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>()
+            .flatMap { it.runs }.filterIsInstance<InlineRun.Link>()
+        assertEquals("」后的外链应存活: ${parsed.blocks}", listOf("详情"), links.map { it.text })
+        val paragraphTexts = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
+        assertTrue("「】」本身应剥掉: $paragraphTexts", paragraphTexts.none { "】" in it })
+    }
+
+    private fun flatten(paragraph: ArticleBlock.Paragraph): String =
+        paragraph.runs.joinToString("") { run ->
+            when (run) {
+                is InlineRun.Text -> run.text
+                is InlineRun.Link -> run.text
+                InlineRun.LineBreak -> "\n"
+            }
+        }.trim()
 }
