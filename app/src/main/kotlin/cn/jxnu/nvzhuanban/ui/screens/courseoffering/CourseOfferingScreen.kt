@@ -416,13 +416,19 @@ private fun ResultList(table: CourseOfferingTable) {
  * 一个都没命中时 titleIndex 为 -1，标题退回首格但正文会跳过该格（不重复渲染）。
  */
 private val TITLE_HINTS = listOf("课程名称标识", "课程名称", "课程名", "课程")
-private val TITLE_EXCLUDE = listOf("课程讨论区")
+
+/**
+ * 整卡隐藏的列：「课程讨论区」（值是「进入讨论区」链接文本）——其目标 /WsktNew/
+ * 已半死（展开即报系统错误），进 app 毫无价值；既不做标题也不渲染正文行。
+ */
+private fun isHiddenColumn(name: String): Boolean = name.contains("讨论区")
+
 
 private fun pickTitleIndex(columns: List<String>, row: List<String>): Int {
     for (hint in TITLE_HINTS) {
         val idx = columns.indices.firstOrNull { i ->
             val c = columns[i]
-            c.contains(hint) && c !in TITLE_EXCLUDE && row.getOrNull(i)?.isNotBlank() == true
+            c.contains(hint) && !isHiddenColumn(c) && row.getOrNull(i)?.isNotBlank() == true
         }
         if (idx != null) return idx
     }
@@ -458,8 +464,8 @@ private fun ResultCard(columns: List<String>, row: List<String>) {
                 }
             } else {
                 columns.forEachIndexed { i, col ->
-                    // 跳过已用作标题的那一格：命中的课名列，或回退时的第 0 格
-                    if (i == titleIndex || (fallbackTitle && i == 0)) return@forEachIndexed
+                    // 跳过已用作标题的那一格、整卡隐藏列（课程讨论区），或回退时的第 0 格
+                    if (i == titleIndex || (fallbackTitle && i == 0) || isHiddenColumn(col)) return@forEachIndexed
                     val value = row.getOrNull(i).orEmpty()
                     if (value.isBlank()) return@forEachIndexed
                     Row(modifier = Modifier.padding(vertical = 1.dp)) {
