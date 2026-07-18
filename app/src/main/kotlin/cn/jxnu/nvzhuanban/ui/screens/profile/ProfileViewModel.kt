@@ -189,7 +189,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun logout(onLoggedOut: () -> Unit) {
-        // logout 现在是 suspend：需要按顺序清掉 6 个 Repository 缓存 + 课程覆盖 + 通知锚点 + widget snapshot
+        // logout 现在是 suspend：需要按顺序清掉全部 Repository 缓存 + 课程覆盖 + 通知锚点 + widget snapshot 等
         if (_isLoggingOut.value) return
         _isLoggingOut.value = true
         viewModelScope.launch {
