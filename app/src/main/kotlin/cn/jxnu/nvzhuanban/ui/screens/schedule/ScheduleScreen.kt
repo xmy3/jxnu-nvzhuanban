@@ -172,6 +172,12 @@ private fun VacationBanner(
 @Composable
 fun ScheduleScreen(
     onOpenExams: () -> Unit = {},
+    /**
+     * 跳开课查询：教师名 / 教室号至多给一个（另一个传 null），用于自动查这位老师的课或这间教室
+     * 的占用；semesterIsoDate 是当前查看学期的开学日 ISO 串（如 `2026-03-01`，离线兜底时为 null），
+     * 让开课查询对齐到同一学期——其表单默认学期是「最新」，学期末教务放出下学期后两者会岔开。
+     */
+    onOpenCourseOffering: (teacher: String?, classroom: String?, semesterIsoDate: String?) -> Unit = { _, _, _ -> },
     viewModel: ScheduleViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -312,6 +318,20 @@ fun ScheduleScreen(
                 course = selectedCourse!!,
                 weekTotal = state.totalWeeks,
                 onEditWeeks = { editingWeeksFor = selectedCourse },
+                // 点教师 / 教室 → 关详情 sheet 再跳开课查询自动查。先清 selectedCourse 收起 sheet，
+                // 避免返回时 sheet 还盖在开课查询页上。学期传当前查看学期的开学日（ISO，
+                // LocalDate.toString() 即 yyyy-MM-dd），开课查询端按开学日对齐自家学期下拉；
+                // 离线兜底态取到 null 则开课查询用默认学期。
+                onQueryTeacher = { name ->
+                    val iso = state.semesterStart?.toString()
+                    selectedCourse = null
+                    onOpenCourseOffering(name, null, iso)
+                },
+                onQueryClassroom = { room ->
+                    val iso = state.semesterStart?.toString()
+                    selectedCourse = null
+                    onOpenCourseOffering(null, room, iso)
+                },
             )
         }
     }

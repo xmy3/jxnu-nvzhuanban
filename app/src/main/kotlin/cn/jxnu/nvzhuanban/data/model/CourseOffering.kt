@@ -20,6 +20,26 @@ data class FormOption(
     val value: String,
 )
 
+/**
+ * 解析学期下拉 value（`2026/9/1 0:00:00`）里的开学日。
+ *
+ * 与 [cn.jxnu.nvzhuanban.data.network.pages.SchedulePage.SemesterOption.startDate] 同一套宽容规则：
+ * 日期分隔符 `/` 与 `\` 都兼容（课表页 ddlSterm 用 `\`、开课查询页用 `/`，指同一学期），
+ * 锁 [java.util.Locale.ROOT] 防非拉丁数字 locale 解析失败。格式不符返回 null。
+ *
+ * 用途：课表「点教师 / 点教室」跳开课查询时按**开学日**对齐两边的学期选项——
+ * 直接比 value 字符串会因分隔符差异永远失配。
+ */
+fun semesterStartDateOf(value: String): java.time.LocalDate? {
+    val normalized = value.substringBefore(' ').replace('\\', '/')
+    return runCatching {
+        java.time.LocalDate.parse(
+            normalized,
+            java.time.format.DateTimeFormatter.ofPattern("yyyy/M/d", java.util.Locale.ROOT),
+        )
+    }.getOrNull()
+}
+
 /** 查询表单页解析结果：四个下拉的选项 + ASP.NET 回传三件套。 */
 data class CourseOfferingForm(
     /** 学期（`ddlSterm`），value 形如 `2026/9/1 0:00:00`。 */

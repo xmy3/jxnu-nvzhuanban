@@ -79,8 +79,38 @@ object Routes {
     const val CLASSROOM = "classroom"
     const val TRAINING_PLAN = "training_plan"
     const val CALENDAR = "calendar"
-    /** 开课查询（Public_Kkap）：按学期/学院/教室/课程/教师检索全校开课。 */
-    const val COURSE_OFFERING = "course_offering"
+    /**
+     * 开课查询（Public_Kkap）：按学期/学院/教室/课程/教师检索全校开课。
+     *
+     * 用 `{field}/{value}/{semester}` 三段 **path 参数**（而非 query 参数）承载从课表带入的
+     * 预填条件——path 参数的 `Uri.encode` + 自动解码行为在本项目已被师生详情路由验证过
+     * （中文名往返正确），query 参数的解码行为在 Navigation 里不一致（值常不被自动解码，
+     * 中文教师名会往返失真）。
+     *
+     * [field] 取 [FIELD_TEACHER] / [FIELD_CLASSROOM] / [FIELD_NONE]；[value] 是原始教师名或
+     * 教室号；[semester] 是课表当前查看学期的**开学日 ISO 串**（如 `2026-03-01`），开课查询端
+     * 按开学日与自家学期下拉对齐（两边 value 格式不同：`2026\3\1` vs `2026/3/1`，不能直接比）。
+     * `-` 表示段缺省。课表点击本就是「教师」「教室」二选一。
+     */
+    const val COURSE_OFFERING = "course_offering/{field}/{value}/{semester}"
+    fun courseOffering(
+        teacher: String? = null,
+        classroom: String? = null,
+        semesterIsoDate: String? = null,
+    ): String {
+        val (field, value) = when {
+            !teacher.isNullOrBlank() -> FIELD_TEACHER to teacher
+            !classroom.isNullOrBlank() -> FIELD_CLASSROOM to classroom
+            else -> FIELD_NONE to "-"
+        }
+        val semester = semesterIsoDate?.takeIf { it.isNotBlank() } ?: "-"
+        return "course_offering/$field/${android.net.Uri.encode(value)}/${android.net.Uri.encode(semester)}"
+    }
+
+    /** [COURSE_OFFERING] 的 field 段取值：无预填 / 预填教师 / 预填教室。 */
+    const val FIELD_NONE = "none"
+    const val FIELD_TEACHER = "teacher"
+    const val FIELD_CLASSROOM = "classroom"
     /** 教工 + 学生合并后的统一查询入口；进入后由顶部 chip 切换。 */
     const val PEOPLE_SEARCH = "people_search"
     const val PROFILE = "profile"
@@ -259,6 +289,9 @@ fun AppNav() {
             composable(Routes.SCHEDULE) {
                 ScheduleScreen(
                     onOpenExams = { nav.navigate(Routes.EXAMS) },
+                    onOpenCourseOffering = { teacher, classroom, semesterIso ->
+                        nav.navigate(Routes.courseOffering(teacher, classroom, semesterIso))
+                    },
                 )
             }
             composable(Routes.GRADES) {
@@ -281,8 +314,35 @@ fun AppNav() {
             composable(Routes.CALENDAR) {
                 CalendarScreen(onBack = { nav.popBackStack() })
             }
-            composable(Routes.COURSE_OFFERING) {
-                CourseOfferingScreen(onBack = { nav.popBackStack() })
+            composable(
+                route = Routes.COURSE_OFFERING,
+                arguments = listOf(
+                    androidx.navigation.navArgument("field") {
+                        type = androidx.navigation.NavType.StringType
+                        defaultValue = Routes.FIELD_NONE
+                    },
+                    androidx.navigation.navArgument("value") {
+                        type = androidx.navigation.NavType.StringType
+                        defaultValue = "-"
+                    },
+                    androidx.navigation.navArgument("semester") {
+                        type = androidx.navigation.NavType.StringType
+                        defaultValue = "-"
+                    },
+                ),
+            ) { backStackEntry ->
+                val field = backStackEntry.arguments?.getString("field").orEmpty()
+                // path 参数已由 Navigation 自动解码，这里拿到的就是原始教师名 / 教室号
+                val value = backStackEntry.arguments?.getString("value").orEmpty()
+                    .takeUnless { it == "-" }.orEmpty()
+                val semesterIso = backStackEntry.arguments?.getString("semester").orEmpty()
+                    .takeUnless { it == "-" }.orEmpty()
+                CourseOfferingScreen(
+                    onBack = { nav.popBackStack() },
+                    prefillTeacher = if (field == Routes.FIELD_TEACHER) value else "",
+                    prefillClassroom = if (field == Routes.FIELD_CLASSROOM) value else "",
+                    prefillSemesterIsoDate = semesterIso,
+                )
             }
             composable(Routes.PEOPLE_SEARCH) {
                 PeopleSearchScreen(
@@ -378,7 +438,7 @@ fun AppNav() {
                     onOpenTrainingPlan = { nav.navigate(Routes.TRAINING_PLAN) },
                     onOpenPeopleSearch = { nav.navigate(Routes.PEOPLE_SEARCH) },
                     onOpenCalendar = { nav.navigate(Routes.CALENDAR) },
-                    onOpenCourseOffering = { nav.navigate(Routes.COURSE_OFFERING) },
+                    onOpenCourseOffering = { nav.navigate(Routes.courseOffering()) },
                 )
             }
             composable(

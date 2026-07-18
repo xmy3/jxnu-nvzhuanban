@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +54,7 @@ import cn.jxnu.nvzhuanban.data.model.CourseOfferingForm
 import cn.jxnu.nvzhuanban.data.model.CourseOfferingQuery
 import cn.jxnu.nvzhuanban.data.model.CourseOfferingTable
 import cn.jxnu.nvzhuanban.data.model.FormOption
+import cn.jxnu.nvzhuanban.data.model.semesterStartDateOf
 import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.ErrorState
@@ -69,11 +71,20 @@ private const val VALUE_UNRESTRICTED = "不限"
  * 结果表列由教务网服务端决定（表头驱动渲染，见 [cn.jxnu.nvzhuanban.data.model.CourseOfferingTable]）。
  * 「查询」要求至少给一个**收敛性**条件（学院≠不限，或任一文本框非空）——全不限会把全校
  * 一学期的开课整表拉回来，响应大且对教务网不友好。
+ *
+ * @param prefillTeacher 从课表「点教师」带入的教师姓名；非空时进屏预填并在表单就绪后自动查询。
+ * @param prefillClassroom 从课表「点教室」带入的教室号；非空时同上。二者一般至多有一个非空。
+ * @param prefillSemesterIsoDate 课表当前查看学期的开学日（ISO `yyyy-MM-dd`）；用于把本页学期
+ *   下拉对齐到同一学期——本页默认学期是「最新」，学期末教务放出下学期选项后与课表会岔开一学期。
+ *   匹配不上（历史学期不在本页下拉里 / 未传）retain 默认首项。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseOfferingScreen(
     onBack: () -> Unit,
+    prefillTeacher: String = "",
+    prefillClassroom: String = "",
+    prefillSemesterIsoDate: String = "",
     viewModel: CourseOfferingViewModel = viewModel(),
 ) {
     val formState by viewModel.formState.collectAsStateWithLifecycle()
@@ -96,6 +107,9 @@ fun CourseOfferingScreen(
             FormAndResults(
                 form = form,
                 resultState = resultState,
+                prefillTeacher = prefillTeacher,
+                prefillClassroom = prefillClassroom,
+                prefillSemesterIsoDate = prefillSemesterIsoDate,
                 onSearch = viewModel::search,
                 onRetrySearch = viewModel::retrySearch,
             )
@@ -107,18 +121,30 @@ fun CourseOfferingScreen(
 private fun FormAndResults(
     form: CourseOfferingForm,
     resultState: CourseOfferingResultState,
+    prefillTeacher: String,
+    prefillClassroom: String,
+    prefillSemesterIsoDate: String,
     onSearch: (CourseOfferingQuery) -> Unit,
     onRetrySearch: () -> Unit,
 ) {
     // 下拉选中值都存 value（不是 label）：value 是教务网回传口径，也是唯一稳定键。
     // null = 未选过 → 生效值取首项（学期首项即当前可查的最新学期）。
-    var semesterValue by rememberSaveable { mutableStateOf<String?>(null) }
+    // 学期初值：课表带入开学日时按日期对齐到本页下拉的同一学期（value 格式两边不同，只能比日期）；
+    // 对不上（历史学期 / 未传）保持 null 走默认首项。
+    var semesterValue by rememberSaveable {
+        mutableStateOf(
+            prefillSemesterIsoDate.takeIf { it.isNotBlank() }?.let { iso ->
+                form.semesters.firstOrNull { semesterStartDateOf(it.value)?.toString() == iso }?.value
+            },
+        )
+    }
     var collegeValue by rememberSaveable { mutableStateOf(VALUE_UNRESTRICTED) }
     var weekValue by rememberSaveable { mutableStateOf(VALUE_UNRESTRICTED) }
     var sectionValue by rememberSaveable { mutableStateOf(VALUE_UNRESTRICTED) }
-    var classroom by rememberSaveable { mutableStateOf("") }
+    // 教室 / 教师文本框初值取预填（从课表带入）；用户后续编辑照常覆盖。
+    var classroom by rememberSaveable { mutableStateOf(prefillClassroom) }
     var courseName by rememberSaveable { mutableStateOf("") }
-    var teacherName by rememberSaveable { mutableStateOf("") }
+    var teacherName by rememberSaveable { mutableStateOf(prefillTeacher) }
     val keyboard = LocalSoftwareKeyboardController.current
 
     val effectiveSemester = semesterValue ?: form.semesters.firstOrNull()?.value.orEmpty()
@@ -140,6 +166,19 @@ private fun FormAndResults(
                     teacherName = teacherName.trim(),
                 ),
             )
+        }
+    }
+
+    // 从课表带条件进来时自动查一次：表单此刻已就绪（StateScaffold Success 分支内），有预填才查。
+    // 判据用 resultState 而非独立的 rememberSaveable 标志——标志会跨进程死亡持久化，而 VM 里的
+    // resultState 不会，恢复后会出现「输入框有条件、结果区永远空白」的失配。用 resultState 判：
+    // 旋转/返回重进（VM 存活，已是 Loading/Success/Error）→ 不重查；进程死亡恢复（VM 重建回
+    // Initial）→ 恰好重新自动查，输入框与结果区保持一致。
+    LaunchedEffect(Unit) {
+        if (resultState is CourseOfferingResultState.Initial &&
+            (prefillTeacher.isNotBlank() || prefillClassroom.isNotBlank())
+        ) {
+            submit()
         }
     }
 
