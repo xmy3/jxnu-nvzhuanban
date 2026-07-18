@@ -70,9 +70,11 @@ object SchedulePage {
         /** ddlSterm option 的 value，格式 `2026/3/1 0:00:00`，是学期开始日期 */
         val value: String,
         /**
-         * 按日期推断的"本学期"：startDate <= today 且在所有候选里最晚。
-         * 不依赖服务器的 `selected` attr —— 服务器有时会停留在上一学期或下一学期，
-         * 我们用日期更可靠。
+         * 按日期推断的"本学期"：第 1 周周一（[SemesterPhase.weekOneMonday] 对齐名义
+         * [startDate]）<= today 且在所有候选里最晚。用对齐后的真实上课日比较，保证开学首日
+         * （如名义 9/1 是周二时的 8/31 周一）当天就切入新学期，而不是干等名义日期；反向
+         * 名义日落在周日（如 3/1）时，前一天也不会提前切换。不依赖服务器的 `selected`
+         * attr —— 服务器有时会停留在上一学期或下一学期，我们用日期更可靠。
          */
         val isCurrent: Boolean,
     ) {
@@ -140,10 +142,11 @@ object SchedulePage {
                 isCurrent = false,
             )
         }
-        // "本学期" = startDate <= today 中最近的一个。
+        // "本学期" = 第 1 周周一（weekOneMonday 对齐后）<= today 中最近的一个。
         // 暑/寒假期间会指向刚结束的学期（而不是下一学期）——上层用 SemesterPhase 区分假期态。
+        // 推论：isCurrent 学期的相位不可能是 NotStarted（两边用同一套周一坐标）。
         val currentValue = raw
-            .mapNotNull { opt -> opt.startDate?.let { opt to it } }
+            .mapNotNull { opt -> opt.startDate?.let { opt to SemesterPhase.weekOneMonday(it) } }
             .filter { !it.second.isAfter(today) }
             .maxByOrNull { it.second }?.first?.value
         return if (currentValue == null) raw

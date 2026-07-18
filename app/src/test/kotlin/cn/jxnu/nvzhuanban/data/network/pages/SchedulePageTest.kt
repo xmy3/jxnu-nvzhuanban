@@ -134,6 +134,20 @@ class SchedulePageTest {
         // 秋季开学后（2026-09-02）：isCurrent 移到 26-27第1学期
         val autumn = SchedulePage.parse(FIXTURE, today = LocalDate.of(2026, 9, 2))
         assertEquals("26-27第1学期", autumn.semesters.first { it.isCurrent }.label)
+
+        // 边界：真实开学日 = 名义 9/1（周二）对齐的 8/31 周一。8/30 仍是暑假（isCurrent 停在
+        // 春季），8/31 当天即切入秋季学期——不再有「开学第一天还提示假期倒计时」的一天窗口
+        val beforeFirstDay = SchedulePage.parse(FIXTURE, today = LocalDate.of(2026, 8, 30))
+        assertEquals("25-26第2学期", beforeFirstDay.semesters.first { it.isCurrent }.label)
+        val firstDay = SchedulePage.parse(FIXTURE, today = LocalDate.of(2026, 8, 31))
+        assertEquals("26-27第1学期", firstDay.semesters.first { it.isCurrent }.label)
+
+        // 反向边界：名义 3/1 是周日，真实上课从 3/2 周一开始。3/1 当天 isCurrent 仍是上学期
+        //（假期最后一天，倒计时 1 天），3/2 才切到春季
+        val nominalSpringDay = SchedulePage.parse(FIXTURE, today = LocalDate.of(2026, 3, 1))
+        assertEquals("25-26第1学期", nominalSpringDay.semesters.first { it.isCurrent }.label)
+        val springFirstDay = SchedulePage.parse(FIXTURE, today = LocalDate.of(2026, 3, 2))
+        assertEquals("25-26第2学期", springFirstDay.semesters.first { it.isCurrent }.label)
     }
 
     @Test

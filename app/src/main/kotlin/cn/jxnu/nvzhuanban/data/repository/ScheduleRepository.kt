@@ -71,6 +71,8 @@ class ScheduleRepository(
         // 假期特例：按日期的"本学期"已经结束（寒暑假），而服务器默认渲染的是一个未来学期
         // （教务通常在假期后段就把默认切到下学期）→ 尊重服务器的选择，不再 POST 切回
         // 已结束的学期。教务切默认学期的时机就是"该看新学期了"的最好信号，还省一次网络请求。
+        // "未来学期"按第 1 周周一（weekOneMonday）判定，与 isCurrent/相位同一套坐标——
+        // 名义 3/1 落在周日时，3/1 当天服务器默认的新学期仍算"未来"，保持预览态而不是回切旧学期。
         // byDate 学期自己的 totalWeeks 拿不到（那页没抓），用当前响应的 totalWeeks 近似——
         // 同校学期周数基本一致，偏差最多让这个特例晚/早生效一两周，无实害。
         val today = LocalDate.now()
@@ -78,7 +80,7 @@ class ScheduleRepository(
         val serverStart = initial.semesters.firstOrNull { it.value == serverValue }?.startDate
         val vacationRespectServer =
             SemesterPhase.at(byDateStart, initial.totalWeeks, today) is SemesterPhase.Ended &&
-                serverStart?.isAfter(today) == true
+                serverStart?.let { SemesterPhase.weekOneMonday(it).isAfter(today) } == true
 
         // 默认渲染的不是"本学期" → 自动 POST 切到本学期。失败就退回到默认数据，至少让用户看到点东西。
         val byDate = if (!vacationRespectServer && byDateValue != null && byDateValue != serverValue) {

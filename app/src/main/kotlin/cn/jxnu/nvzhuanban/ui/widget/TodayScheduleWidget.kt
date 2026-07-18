@@ -124,7 +124,7 @@ class TodayScheduleWidget : GlanceAppWidget() {
                     is SemesterPhase.Ended ->
                         VacationContent(today, snapshot.nextSemesterStart)
                     is SemesterPhase.NotStarted ->
-                        VacationContent(today, phase.startDate)
+                        VacationContent(today, phase.weekOneMonday)
                     else -> Column(modifier = GlanceModifier.fillMaxSize()) {
                         Header(week, weekday, today)
                         Spacer(GlanceModifier.height(8.dp))
@@ -325,7 +325,8 @@ class TodayScheduleWidget : GlanceAppWidget() {
 
     /**
      * 假期态内容：寒/暑假问候 + 开学倒计时。
-     * [nextStart] 为下一个学期的名义开学日；教务还没放出下学期选项时为 null，只显示问候。
+     * [nextStart] 为下一个学期的开学日（第 1 周周一，即真实上课首日，不是教务的名义日期）；
+     * 教务还没放出下学期选项时为 null，只显示问候。
      */
     @Composable
     private fun VacationContent(today: LocalDate, nextStart: LocalDate?) {

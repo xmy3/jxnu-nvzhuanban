@@ -28,7 +28,8 @@ import java.time.LocalDate
  *
  * @param semesterEnded true = 正在看的是**已结束的本学期**（寒暑假中打开课表的默认态）；
  *   false = 正在看的是一个**尚未开学**的学期（假期里预览下学期，或学期中翻看未来学期）。
- * @param nextStartDate 开学日（教务 option 的名义日期）。semesterEnded 时是下一个学期的
+ * @param nextStartDate 开学日 = 第 1 周周一（名义日期经 [SemesterPhase.weekOneMonday] 对齐，
+ *   即真实校历的上课首日，如 2026 秋名义 9/1 周二 → 8/31）。semesterEnded 时是下一个学期的
  *   开学日（教务还没放出下学期选项时为 null）；!semesterEnded 时是正在看的学期自己的开学日。
  * @param nextSemesterValue 下学期 option value，供横幅上「看下学期」一键切换；
  *   仅 semesterEnded 且教务已放出下学期时非空。
@@ -144,8 +145,13 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
             }
             is SemesterPhase.Ended -> if (isCurrentSelected) {
                 // 寒暑假：本学期已结束。「今天」落到最后一周；找下一个学期做开学倒计时
+                //（比较与展示都用第 1 周周一，见 VacationInfo.nextStartDate）
                 val next = semesters
-                    .mapNotNull { o -> o.startDate?.takeIf { it.isAfter(today) }?.let { o to it } }
+                    .mapNotNull { o ->
+                        o.startDate?.let { SemesterPhase.weekOneMonday(it) }
+                            ?.takeIf { it.isAfter(today) }
+                            ?.let { o to it }
+                    }
                     .minByOrNull { it.second }
                 TimeState(
                     baselineWeek = totalWeeks,
@@ -162,11 +168,12 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                 TimeState(baselineWeek, null, null, isCurrentSelected = false)
             }
             is SemesterPhase.NotStarted -> TimeState(
-                // 尚未开学的学期：假期里预览下学期、或开学日落在周五~周日时的头几天
-                //（此时它已是 isCurrent）。横幅显示它自己的开学倒计时。
+                // 尚未开学的学期：假期里预览下学期（教务把默认切到新学期时也会走到这里）。
+                // isCurrent 已按 weekOneMonday 对齐，正常不会出现"选中的本学期未开学"，
+                // 条件保留作防御。横幅显示它自己的开学倒计时（真实上课首日）。
                 baselineWeek = if (isCurrentSelected) 1 else baselineWeek,
                 currentWeek = null,
-                vacation = VacationInfo(semesterEnded = false, nextStartDate = phase.startDate),
+                vacation = VacationInfo(semesterEnded = false, nextStartDate = phase.weekOneMonday),
                 isCurrentSelected = isCurrentSelected,
             )
             null -> TimeState(baselineWeek, null, null, isCurrentSelected)
@@ -404,7 +411,7 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
             is SemesterPhase.NotStarted -> {
                 week = 1
                 currentWeek = null
-                vacation = VacationInfo(semesterEnded = false, nextStartDate = phase.startDate)
+                vacation = VacationInfo(semesterEnded = false, nextStartDate = phase.weekOneMonday)
             }
             // 老快照没存开学日：沿用保存那一刻的周，无从判断假期
             null -> {
@@ -457,11 +464,14 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
             .firstOrNull { it.value == repo.currentSemesterValue() }?.isCurrent == true
         if (!isCurrentSemester) return
         val ctx = getApplication<Application>()
-        // 下一个学期的名义开学日：假期态时 widget 用它显示「距开学 N 天」倒计时
+        // 下一个学期的开学日：假期态时 widget 用它显示「距开学 N 天」倒计时。
+        // 快照存名义日期（读取侧 nextSemesterStart getter 统一对齐 weekOneMonday），但
+        // "哪个学期算未来"必须按第 1 周周一判定——否则真实开学首日（如 8/31，名义 9/1
+        // 还没到）会把当前学期自己当成"下一学期"写进快照。
         val today = LocalDate.now()
         val nextStart = repo.availableSemesters()
             .mapNotNull { it.startDate }
-            .filter { it.isAfter(today) }
+            .filter { SemesterPhase.weekOneMonday(it).isAfter(today) }
             .minOrNull()
         val snap = ScheduleSnapshot.fromCourses(
             semester = repo.currentSemester(),

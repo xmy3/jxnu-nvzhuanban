@@ -60,10 +60,29 @@ class SemesterPhaseTest {
     }
 
     @Test
+    fun `Tuesday nominal start counts week one from the previous Monday`() {
+        val start = LocalDate.of(2026, 9, 1) // 周二，26-27第1学期的真实 option 值
+        // 8/30（周日）还在假期：NotStarted 携带对齐后的 8/31（真实上课首日）——
+        // 倒计时「距开学还有 1 天」，不再锚定名义 9/1 多算一天
+        assertEquals(
+            SemesterPhase.NotStarted(LocalDate.of(2026, 8, 31)),
+            SemesterPhase.at(start, 18, LocalDate.of(2026, 8, 30)),
+        )
+        // 真实开学日 8/31（周一）当天即第 1 周进行中，不用等到名义 9/1
+        assertEquals(SemesterPhase.InProgress(1), SemesterPhase.at(start, 18, LocalDate.of(2026, 8, 31)))
+        assertEquals(SemesterPhase.InProgress(1), SemesterPhase.at(start, 18, start))
+        assertEquals(SemesterPhase.InProgress(2), SemesterPhase.at(start, 18, LocalDate.of(2026, 9, 7)))
+    }
+
+    @Test
     fun `Sunday nominal start counts weeks from the next Monday`() {
         val start = LocalDate.of(2026, 3, 1) // 周日
-        // 名义开学日当天还没到第 1 周周一：未开学（UI 显示「即将开学」）
-        assertEquals(SemesterPhase.NotStarted(start), SemesterPhase.at(start, 18, start))
+        // 名义开学日当天还没到第 1 周周一：未开学。NotStarted 携带对齐后的 3/2（真实上课首日），
+        // UI 如实倒计时「距开学还有 1 天」，而不是按名义日误显「即将开学」
+        assertEquals(
+            SemesterPhase.NotStarted(LocalDate.of(2026, 3, 2)),
+            SemesterPhase.at(start, 18, start),
+        )
         assertEquals(SemesterPhase.InProgress(1), SemesterPhase.at(start, 18, LocalDate.of(2026, 3, 2)))
         assertEquals(SemesterPhase.InProgress(1), SemesterPhase.at(start, 18, LocalDate.of(2026, 3, 8)))
         assertEquals(SemesterPhase.InProgress(2), SemesterPhase.at(start, 18, LocalDate.of(2026, 3, 9)))

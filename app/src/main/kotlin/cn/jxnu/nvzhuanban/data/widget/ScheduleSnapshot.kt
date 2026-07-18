@@ -32,6 +32,7 @@ data class ScheduleSnapshot(
     /**
      * 下一个学期的名义开学日 epoch day；-1 表示未知（教务还没放出下学期选项 / 老快照）。
      * 假期态（本学期已结束）时 widget 用它显示「距开学 N 天」倒计时。
+     * 存储保持名义日期（老快照无需迁移），读取一律走 [nextSemesterStart]——它会对齐到第 1 周周一。
      */
     val nextSemesterStartEpochDay: Long = -1L,
     /** 保存这份 snapshot 那一刻是第几教学周；仅作为 [semesterStartEpochDay] 缺失时的回退。 */
@@ -79,9 +80,15 @@ data class ScheduleSnapshot(
     /** 这份 snapshot 是否带有可信的学期起始日（旧版没有）。 */
     val hasSemesterStart: Boolean get() = semesterStartEpochDay >= 0L
 
-    /** 下学期名义开学日；未知（教务未放出 / 老快照）返回 null。 */
+    /**
+     * 下学期开学日 = 第 1 周周一（存储的名义日经 [SemesterPhase.weekOneMonday] 对齐，如名义
+     * 9/1 周二 → 8/31）；未知（教务未放出 / 老快照）返回 null。「距开学 N 天」「X月X日 开学」
+     * 都以它为准，与课表页同一套坐标；老快照里存的名义日在这里同样被对齐，对齐幂等（周一原样返回）。
+     */
     val nextSemesterStart: LocalDate?
-        get() = if (nextSemesterStartEpochDay >= 0L) LocalDate.ofEpochDay(nextSemesterStartEpochDay) else null
+        get() = if (nextSemesterStartEpochDay >= 0L)
+            SemesterPhase.weekOneMonday(LocalDate.ofEpochDay(nextSemesterStartEpochDay))
+        else null
 
     /**
      * 把快照还原成完整 [Course] 列表，供课表页「离线兜底」展示（网络失败时显示上次缓存的课表）。

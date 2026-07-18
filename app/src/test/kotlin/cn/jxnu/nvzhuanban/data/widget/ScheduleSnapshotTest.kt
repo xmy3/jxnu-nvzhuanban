@@ -98,12 +98,29 @@ class ScheduleSnapshotTest {
 
     @Test
     fun nextSemesterStartSurvivesJsonRoundTrip() {
-        val nextStart = LocalDate.of(2026, 9, 1)
+        // 存进快照的是教务名义日（2026/9/1 周二），读取时对齐到第 1 周周一 8/31——
+        // widget 的「距开学 N 天」「X月X日 开学」都以真实上课首日为准
         val json = ScheduleSnapshot.fromCourses(
             "2025-2026-2", 18, LocalDate.of(2026, 3, 2),
-            emptyList(), nextSemesterStart = nextStart,
+            emptyList(), nextSemesterStart = LocalDate.of(2026, 9, 1),
         ).toJson()
-        assertEquals(nextStart, ScheduleSnapshot.fromJson(json).nextSemesterStart)
+        assertEquals(LocalDate.of(2026, 8, 31), ScheduleSnapshot.fromJson(json).nextSemesterStart)
+    }
+
+    @Test
+    fun nextSemesterStartAlignsSundayNominalForwardAndKeepsMonday() {
+        // 名义 3/1（周日）→ 3/2 周一；已是周一的名义日原样返回（对齐幂等，
+        // 老快照存名义日、未来若改存对齐日都能安全读取）
+        val sunday = ScheduleSnapshot.fromCourses(
+            "2025-2026-1", 18, LocalDate.of(2025, 9, 1),
+            emptyList(), nextSemesterStart = LocalDate.of(2026, 3, 1),
+        )
+        assertEquals(LocalDate.of(2026, 3, 2), sunday.nextSemesterStart)
+        val monday = ScheduleSnapshot.fromCourses(
+            "2024-2025-2", 18, LocalDate.of(2025, 3, 2),
+            emptyList(), nextSemesterStart = LocalDate.of(2025, 9, 1),
+        )
+        assertEquals(LocalDate.of(2025, 9, 1), monday.nextSemesterStart)
     }
 
     @Test
