@@ -149,11 +149,13 @@ private fun VacationBanner(
         days != null && days > 0L -> "假期中 · 距开学还有 $days 天"
         else -> "本学期已结束 · 假期中"
     }
+    // 纵向 4.dp（行）+ 4.dp（正文自带）= 8.dp，与「看下学期」按钮的 4.dp 内边距互相抵消，
+    // 有无该按钮两种形态的横幅总高度保持一致。
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.tertiaryContainer)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -167,7 +169,9 @@ private fun VacationBanner(
             text = text,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onTertiaryContainer,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .padding(vertical = 4.dp),
         )
         val nextValue = info.nextSemesterValue
         if (info.semesterEnded && nextValue != null) {
