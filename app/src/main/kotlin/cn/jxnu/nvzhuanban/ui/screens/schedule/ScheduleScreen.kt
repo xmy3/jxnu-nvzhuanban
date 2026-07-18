@@ -81,22 +81,21 @@ import java.time.temporal.ChronoUnit
 
 internal val LEFT_LABEL_WIDTH = 36.dp
 internal val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
-/** 无课的周末列折叠成的窄占位宽度（仍显示「六/日」+竖排「无课」，把腾出的横向空间让给工作日）。 */
-internal val FOLDED_DAY_WIDTH = 22.dp
 
 /**
- * 计算需要折叠成窄占位的星期几（整学期无课的**末尾**连续空列，从周日往前数）。
- * 只折叠尾部空列，绝不在中间留洞：周日有课而周六无课时只折周日、周六保持正常。
- * 折叠依据是**全学期**课表（非当前周），避免逐周切换时列宽反复跳动。
- * 空课表（加载中/无数据）返回空集，不折叠。
+ * 计算需要整列隐藏的星期几。规则（周六是主导，绝大多数学期周六无课）：
+ * - 周六整学期无课 → 收起周六；此时周日若也无课 → 一起收起（{6,7}），周日有课则只收周六（{6}）。
+ * - 周六有课 → 什么都不收——**周日绝不单独收起**（即使周日整学期无课）。
+ * 收起的列直接从表头和网格中移除，剩余列 weight 平分变宽。
+ * 判断依据是**全学期**课表（非当前周），避免逐周切换时列宽反复跳动。
+ * 空课表（加载中/无数据）返回空集，不收起。
  */
 internal fun computeFoldedDays(courses: List<Course>): Set<Int> {
     if (courses.isEmpty()) return emptySet()
-    val folded = mutableSetOf<Int>()
-    for (day in 7 downTo 1) {
-        if (courses.none { it.weekday == day }) folded.add(day) else break
-    }
-    return folded
+    val satEmpty = courses.none { it.weekday == 6 }
+    if (!satEmpty) return emptySet()
+    val sunEmpty = courses.none { it.weekday == 7 }
+    return if (sunEmpty) setOf(6, 7) else setOf(6)
 }
 
 /**
@@ -694,12 +693,12 @@ private fun WeekdayHeader(
         Spacer(Modifier.width(LEFT_LABEL_WIDTH))
         WEEKDAY_LABELS.forEachIndexed { idx, label ->
             val weekday = idx + 1
+            // 收起的周末列整列不渲染，剩余列 weight 平分变宽
+            if (weekday in foldedDays) return@forEachIndexed
             val isToday = weekday == todayWeekday
-            val isFolded = weekday in foldedDays
             val date = weekMonday?.plusDays((weekday - 1).toLong())
             Column(
-                // 折叠列固定窄宽，工作日 weight 平分剩余空间 → 列变宽、课程与教室字号更大
-                modifier = if (isFolded) Modifier.width(FOLDED_DAY_WIDTH) else Modifier.weight(1f),
+                modifier = Modifier.weight(1f),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
@@ -708,8 +707,7 @@ private fun WeekdayHeader(
                     fontWeight = if (isToday) FontWeight.Bold else FontWeight.SemiBold,
                     color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 )
-                // 折叠列不显示日期（宽度放不下 M/d），改在网格里竖排「无课」占位
-                if (date != null && !isFolded) {
+                if (date != null) {
                     Text(
                         text = date.format(dateFormatter),
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),

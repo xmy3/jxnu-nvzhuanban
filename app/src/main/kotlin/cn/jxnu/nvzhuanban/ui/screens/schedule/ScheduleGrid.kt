@@ -198,22 +198,19 @@ internal fun ScheduleGrid(
     ) {
         Row(modifier = Modifier.fillMaxWidth()) {
             SectionLabels(sectionHeightDp = sectionHeightDp)
-            // 7 个 weekday 列。整学期无课的末尾周末列折叠成窄占位（显示竖排「无课」），
-            // 腾出的横向空间由工作日 weight(1f) 平分 → 列变宽、课程名与教室号字号更大。
+            // weekday 列。周六整学期无课时收起周六（周日也无课则一起收，foldedDays={6}或{6,7}），
+            // 横向空间由剩余列 weight(1f) 平分 → 列变宽、课程名与教室号字号更大。
             for (day in 1..7) {
-                if (day in foldedDays) {
-                    FoldedDayColumn(sectionHeightDp = sectionHeightDp)
-                } else {
-                    DayColumn(
-                        courses = coursesByDay[day].orEmpty(),
-                        isToday = day == todayWeekday,
-                        highlight = if (day == todayWeekday) highlightState else null,
-                        palette = palette,
-                        onCourseClick = onCourseClick,
-                        sectionHeightDp = sectionHeightDp,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                if (day in foldedDays) continue
+                DayColumn(
+                    courses = coursesByDay[day].orEmpty(),
+                    isToday = day == todayWeekday,
+                    highlight = if (day == todayWeekday) highlightState else null,
+                    palette = palette,
+                    onCourseClick = onCourseClick,
+                    sectionHeightDp = sectionHeightDp,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
@@ -251,33 +248,6 @@ private fun SectionLabels(sectionHeightDp: () -> Float) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-            }
-        }
-    }
-}
-
-/**
- * 折叠的周末占位列：整学期无课时不占正常列宽，改用窄条 + 竖排「无课」，
- * 既把横向空间让给工作日，又保留「六/日」的视觉位置不让课表看起来缺一块。
- */
-@Composable
-private fun FoldedDayColumn(sectionHeightDp: () -> Float) {
-    Box(
-        modifier = Modifier
-            .width(FOLDED_DAY_WIDTH)
-            .sectionHeight(SECTIONS, sectionHeightDp)
-            .clearAndSetSemantics {},
-        contentAlignment = Alignment.Center,
-    ) {
-        // 竖排「无课」：每字一行，窄条里也读得通
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            for (ch in "无课") {
-                Text(
-                    text = ch.toString(),
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    maxLines = 1,
-                )
             }
         }
     }
