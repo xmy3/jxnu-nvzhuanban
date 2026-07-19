@@ -30,6 +30,28 @@ private val decodedImageCache = object : LruCache<String, ImageBitmap>(20 * 1024
 /** 退出登录时清空，避免上一用户的头像 / 检索照片以解码位图形式跨账号残留。 */
 internal fun clearDecodedImageCache() = decodedImageCache.evictAll()
 
+/**
+ * 解码尺寸上限（单边）。通知里的手机长截图原始尺寸可达 1080x10000+，全尺寸解码单张 40MB+：
+ * 一张就击穿 20MB LruCache 使缓存整体失效、滚动反复重解码掉帧，且超过多数 GPU 的
+ * 4096px 纹理上限时 Compose 直接渲染空白。two-pass（inJustDecodeBounds → inSampleSize）
+ * 把最长边压到 ≤2048px，视觉上手机屏内无损。
+ */
+private const val MAX_DECODE_DIM = 2048
+
+private fun decodeSampled(bytes: ByteArray): android.graphics.Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    // 循环到两边都 ≤ MAX_DECODE_DIM 为止（条件写 `>` 而不是 half-size 惯用的
+    // `/(sample*2) >=`——后者只保证 <2*MAX，12MP 手机照片会整张漏过不降采样）
+    while (bounds.outWidth / sample > MAX_DECODE_DIM || bounds.outHeight / sample > MAX_DECODE_DIM) {
+        sample *= 2
+    }
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+}
+
 /** 加载中 / 成功 / 失败三态，Failed 与 Loading 区分开才能给调用方提供重试入口。 */
 private sealed interface ImageLoadState {
     data object Loading : ImageLoadState
@@ -87,7 +109,7 @@ fun RemoteJwcImage(
                 // getBytesAuth：session 失效时自动 reauth + 重放一次，避免头像加载失败把用户踢出
                 JwcClient.getBytesAuth(url, "图片返回空响应")
             }.getOrNull()
-                ?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                ?.let(::decodeSampled)
                 ?.asImageBitmap()
         }
         state = if (bmp != null) {

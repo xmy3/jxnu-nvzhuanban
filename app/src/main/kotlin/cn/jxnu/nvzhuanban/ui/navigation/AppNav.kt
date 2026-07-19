@@ -41,7 +41,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -487,7 +486,12 @@ private fun BottomNav(
                 onClick = {
                     if (!selected) {
                         nav.navigate(tab.route) {
-                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                            // 锚定 SCHEDULE 而非 graph.findStartDestination()：登录页冷启动的会话里
+                            // startDestination 是 LOGIN，登录成功后已被 popUpTo(inclusive) 弹掉，
+                            // 按 id 找锚点会永远 pop 不到 —— 每次切 tab 都往栈里压新实例，
+                            // saveState/restoreState 全失效（滚动位置丢、返回键倒退一长串）。
+                            // 登录成功与已登录冷启动两条路径的栈底都恒为 SCHEDULE。
+                            popUpTo(Routes.SCHEDULE) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
                         }

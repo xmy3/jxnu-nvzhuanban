@@ -40,6 +40,9 @@ fun Throwable.toUserMessage(fallback: String = "加载失败"): String = when (t
     is SocketTimeoutException -> JwcError.Network(message).toUserMessage()
     is UnknownHostException -> JwcError.Network(message).toUserMessage()
     is SSLException -> JwcError.Ssl(message).toUserMessage()
-    is IOException -> message ?: JwcError.Network().toUserMessage()
-    else -> message ?: fallback
+    // 兜底透传是白名单制：裸 IOException（ConnectException 的 "Failed to connect to …:443"、
+    // SocketException…）的 message 是英文系统串，不能上屏，一律归网络失败文案；
+    // 其余异常仅当 message 含中文（自己人写的用户文案，如 LoginException）才透传。
+    is IOException -> JwcError.Network(message).toUserMessage()
+    else -> message?.takeIf { m -> m.any { it in '一'..'鿿' } } ?: fallback
 }

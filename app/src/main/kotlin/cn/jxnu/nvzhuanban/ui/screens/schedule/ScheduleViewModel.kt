@@ -15,8 +15,11 @@ import cn.jxnu.nvzhuanban.data.widget.WidgetSnapshotStore
 import cn.jxnu.nvzhuanban.ui.components.UiState
 import cn.jxnu.nvzhuanban.ui.widget.TodayScheduleWidget
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -107,6 +110,13 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    /**
+     * 一次性瞬时错误（切学期失败 / 刷新失败但旧数据仍在展示），Screen 收 Snackbar 展示。
+     * 与整页 Error 的分工：正在看的课表**绝不因后台失败被顶掉**，只弹提示。
+     */
+    private val _transientError = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val transientError: SharedFlow<String> = _transientError.asSharedFlow()
 
     init { loadWeek(baselineWeek) }
 
@@ -218,9 +228,18 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
      */
     fun selectSemester(value: String) {
         if (value == _state.value.selectedSemesterValue) return
+        if (_isRefreshing.value) {
+            // 防并发（上一次切换/刷新还在 POST）：不能静默丢掉用户的切换意图——
+            // sheet 已经关了，无提示的话就是"点了没反应"
+            _transientError.tryEmit("正在刷新，请稍候再试")
+            return
+        }
         userPickedSemester = true
         // 保留旧课表数据，不切 Loading：已缓存学期 Repository 会秒切（不闪 spinner），
-        // 未缓存的场景用户看到旧数据停留 200ms 也比白屏好。失败路径里会显式切 Error。
+        // 未缓存的场景用户看到旧数据停留 200ms 也比白屏好。
+        // 复用 isRefreshing 驱动顶栏 spinner：未缓存学期弱网下要等一次真实 POST，
+        // 零指示会让用户以为"点了没反应"而反复重点。
+        _isRefreshing.value = true
         viewModelScope.launch {
             try {
                 repo.selectSemester(value)
@@ -245,7 +264,16 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                 }
                 refreshWidgetSnapshot(list)
             } catch (t: Throwable) {
-                _state.update { it.copy(data = UiState.Error(t.toUserMessage("切换学期失败"))) }
+                // 失败保留正在展示的旧学期课表：整页置 Error 会把课表顶掉，而 Error 的
+                // 重试走 refresh() 恢复的还是旧学期（切换意图已丢），只弹一次性提示更诚实。
+                // 此前无成功数据（还停在 Loading / Error）才置 Error 给出重试入口。
+                if (_state.value.data is UiState.Success) {
+                    _transientError.tryEmit(t.toUserMessage("切换学期失败"))
+                } else {
+                    _state.update { it.copy(data = UiState.Error(t.toUserMessage("切换学期失败"))) }
+                }
+            } finally {
+                _isRefreshing.value = false
             }
         }
     }
@@ -289,10 +317,71 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
                 // data 已是 Success（在线旧数据或离线缓存）→ 保留不动；仅当还停在 Loading 才兜底/报错
                 if (_state.value.data is UiState.Loading) {
                     fallbackToSnapshotOrError(t)
+                } else {
+                    // 旧数据仍在展示：不能只停转圈（会被误读成"刷新完成、就是最新"）
+                    _transientError.tryEmit(t.toUserMessage("刷新失败"))
                 }
             } finally {
                 _isRefreshing.value = false
             }
+        }
+    }
+
+    /**
+     * 跨零点自愈：ScheduleScreen 的零点 ticker 调用。零点前后 [deriveTimeState] 的输入
+     * （今天的日期）变了，但它只在数据落点被调用——页面驻留跨过周日→周一时 currentWeek
+     * 停在上一周，「今」列高亮与列头日期会整体落在过期的一周网格上。
+     * 在线态全部输入来自 repo 内存缓存，无网络请求。
+     */
+    fun onDayChanged() {
+        val prev = _state.value
+        val wasOnCurrentWeek = prev.currentWeek != null && prev.selectedWeek == prev.currentWeek
+        if (prev.isOffline) {
+            // 离线兜底态 repo 内存缓存是空的（这次拉取失败过），deriveTimeState 会把快照
+            // 算出的时间态清成 null（「今」列高亮/假期横幅凭空消失）。改用已还原进 state
+            // 的快照开学日重算，与 loadOfflineSnapshot 同源；老快照没存开学日则维持现状。
+            val total = prev.totalWeeks.coerceAtLeast(1)
+            when (val phase = SemesterPhase.at(prev.semesterStart, total, LocalDate.now())) {
+                is SemesterPhase.InProgress -> {
+                    val week = phase.week.coerceIn(1, total)
+                    _state.update {
+                        it.copy(
+                            currentWeek = week,
+                            vacation = null,
+                            selectedWeek = if (wasOnCurrentWeek) week else it.selectedWeek,
+                        )
+                    }
+                }
+                is SemesterPhase.Ended -> _state.update {
+                    // 跨零点恰逢学期结束：保留快照里已有的下学期开学日（若有）继续倒计时
+                    it.copy(
+                        currentWeek = null,
+                        vacation = VacationInfo(
+                            semesterEnded = true,
+                            nextStartDate = it.vacation?.nextStartDate,
+                        ),
+                    )
+                }
+                is SemesterPhase.NotStarted -> _state.update {
+                    it.copy(
+                        currentWeek = null,
+                        vacation = VacationInfo(semesterEnded = false, nextStartDate = phase.weekOneMonday),
+                    )
+                }
+                null -> Unit
+            }
+            return
+        }
+        val ts = deriveTimeState()
+        baselineWeek = ts.baselineWeek
+        _state.update {
+            it.copy(
+                currentWeek = ts.currentWeek,
+                vacation = ts.vacation,
+                // 用户本来就停在"本周"、没有主动翻页 → 跟着推进到新的本周；
+                // 主动翻到别的周则不打扰
+                selectedWeek = if (wasOnCurrentWeek && ts.currentWeek != null) ts.currentWeek else it.selectedWeek,
+            )
         }
     }
 

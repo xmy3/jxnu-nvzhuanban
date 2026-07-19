@@ -36,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -73,6 +74,7 @@ import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import cn.jxnu.nvzhuanban.ui.components.UiState
+import cn.jxnu.nvzhuanban.ui.components.rememberTransientErrorSnackbar
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.LocalDate
@@ -232,6 +234,9 @@ fun ScheduleScreen(
             val untilMidnight = Duration.between(now, now.toLocalDate().plusDays(1).atStartOfDay())
             delay(untilMidnight.toMillis() + 1_000L)
             today = LocalDate.now()
+            // currentWeek / 假期横幅只在数据落点重算，这里补一次跨零点自愈：
+            // 周日→周一跨周时不重算的话「今」列高亮会落在上一周的网格上
+            viewModel.onDayChanged()
         }
     }
     // 仅当用户当前选中的是"本周"时，今天列才高亮。否则切到别的周看课表时不该有"今天"概念。
@@ -242,6 +247,9 @@ fun ScheduleScreen(
         } else -1
 
     Scaffold(
+        snackbarHost = {
+            SnackbarHost(rememberTransientErrorSnackbar(viewModel.transientError))
+        },
         topBar = {
             TopAppBar(
                 title = {

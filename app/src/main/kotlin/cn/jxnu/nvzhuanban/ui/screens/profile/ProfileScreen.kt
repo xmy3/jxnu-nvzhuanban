@@ -260,7 +260,14 @@ fun ProfileScreen(
         AlertDialog(
             onDismissRequest = { if (!isLoggingOut) showLogoutConfirm = false },
             title = { Text("退出登录") },
-            text = { Text("将清除本地登录态，需要重新输入账号密码。是否继续？") },
+            // 如实披露：logout 会清掉的不止"登录态"——手动编辑的课程周次、师生查询历史
+            // 这些教务系统不保存、重新登录也回不来，必须在用户确认前说清楚。
+            text = {
+                Text(
+                    "将清除本机保存的密码与登录状态，以及手动编辑的课程周次、" +
+                        "师生查询历史等本地数据（教务系统不保存这些修改，重新登录后无法恢复）。是否继续？",
+                )
+            },
             confirmButton = {
                 TextButton(
                     enabled = !isLoggingOut,
@@ -543,7 +550,14 @@ private fun GradesEntryCard(
                 0L -> "今天"
                 else -> "$nearestDays 天"
             },
-            label = if (nearestDays != null) "距下场考试" else "暂无待考",
+            // 三态：有待考 → 倒计时；确认拉到列表但没有待考 → 「暂无待考」；
+            // 拉取失败/还没拉到（exams == null）→ 中性的「考试安排」——不能把网络失败
+            // 说成确定性的"没有考试"，明天有考试但此刻断网的人会被误导。
+            label = when {
+                nearestDays != null -> "距下场考试"
+                exams != null -> "暂无待考"
+                else -> "考试安排"
+            },
             modifier = Modifier.weight(1f),
             onClick = onOpenExams,
         )

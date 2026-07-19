@@ -226,12 +226,27 @@ private fun TestGradeRow(grade: TestGrade) {
 
 @Composable
 private fun ScoreBadge(label: String, value: String, emphasize: Boolean) {
-    val containerColor = if (emphasize) MaterialTheme.colorScheme.primary
-    else MaterialTheme.colorScheme.surfaceContainerHigh
-    val labelColor = if (emphasize) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-    else MaterialTheme.colorScheme.onSurfaceVariant
-    val valueColor = if (emphasize) MaterialTheme.colorScheme.onPrimary
-    else scoreColor(value, zeroMeansUnfilled = true)
+    // 总评徽章底色跟随分数语义：挂科（<60 或「不及格」等等级制挂科）用 error 容器——
+    // 否则挂科总评与 95 分视觉完全相同，出分季翻列表毫无警示。
+    // 0 分沿用「教师未填」语义（zeroMeansUnfilled），不算挂科。
+    val num = value.toFloatOrNull()
+    val failing = (num != null && num > 0f && num < 60f) ||
+        (num == null && value.trim().startsWith("不"))
+    val containerColor = when {
+        emphasize && failing -> MaterialTheme.colorScheme.error
+        emphasize -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val labelColor = when {
+        emphasize && failing -> MaterialTheme.colorScheme.onError.copy(alpha = 0.85f)
+        emphasize -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val valueColor = when {
+        emphasize && failing -> MaterialTheme.colorScheme.onError
+        emphasize -> MaterialTheme.colorScheme.onPrimary
+        else -> scoreColor(value, zeroMeansUnfilled = true)
+    }
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(14.dp))

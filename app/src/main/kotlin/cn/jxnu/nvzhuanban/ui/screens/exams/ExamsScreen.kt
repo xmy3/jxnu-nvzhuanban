@@ -31,6 +31,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -59,6 +60,7 @@ import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+import cn.jxnu.nvzhuanban.ui.components.rememberTransientErrorSnackbar
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.LocalDateTime
@@ -86,6 +88,7 @@ fun ExamsScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(rememberTransientErrorSnackbar(viewModel.refreshFailed)) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.exams_title)) },
@@ -121,8 +124,11 @@ fun ExamsScreen(
 private fun ExamsList(bundle: ExamsBundle, now: LocalDateTime) {
     // exams 列表本身基本不变（除非用户主动刷新），now 由分钟级 tick 推上来；
     // 把 partition 缓在 (exams, now) 上，分钟内的多次重组就不再走两遍线性扫描。
+    // 已结束分组倒序（最近考完的在最前）：学期末查昨天考试的座位号/成绩核对最常见，
+    // 不该让它沉在十几条开学初的旧记录底下。
     val (upcoming, finished) = remember(bundle.regular, now) {
-        bundle.regular.partition { it.statusAt(now) != ExamStatus.FINISHED }
+        val (up, fin) = bundle.regular.partition { it.statusAt(now) != ExamStatus.FINISHED }
+        up to fin.asReversed()
     }
     val makeup = bundle.makeup
     // 补缓考列表默认折叠：常规情况下用户更关心的是即将到来的考试，补缓考通常零星出现，

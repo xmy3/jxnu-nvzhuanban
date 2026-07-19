@@ -27,6 +27,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -59,6 +60,7 @@ import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.ListSkeleton
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+import cn.jxnu.nvzhuanban.ui.components.rememberTransientErrorSnackbar
 import cn.jxnu.nvzhuanban.ui.theme.AppShape
 
 private enum class GradesTab(val labelRes: Int) {
@@ -86,6 +88,13 @@ fun GradesScreen(
     }
 
     Scaffold(
+        // 两个 Tab 的刷新失败提示共用一个 host——出分季反复下拉「考试出分」时，
+        // 网络失败必须可见，否则会被误读成「还没出分」
+        snackbarHost = {
+            SnackbarHost(
+                rememberTransientErrorSnackbar(semesterViewModel.refreshFailed, testViewModel.refreshFailed),
+            )
+        },
         topBar = {
             Column {
                 TopAppBar(

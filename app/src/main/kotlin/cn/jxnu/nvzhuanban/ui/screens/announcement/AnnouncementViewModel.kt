@@ -8,8 +8,11 @@ import cn.jxnu.nvzhuanban.data.network.toUserMessage
 import cn.jxnu.nvzhuanban.data.repository.AnnouncementRepository
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementReadAnchor
 import cn.jxnu.nvzhuanban.ui.components.UiState
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
@@ -63,6 +66,10 @@ class AnnouncementViewModel(
 
     private val _isLoadingMore = MutableStateFlow(false)
     val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+
+    /** 刷新失败（旧列表仍在展示）的一次性提示，Screen 用 Snackbar 展示。 */
+    private val _refreshFailed = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val refreshFailed: SharedFlow<String> = _refreshFailed.asSharedFlow()
 
     /** 当前已加载到的最后一页（从 1 开始）。下拉刷新时回到 1。 */
     private var currentPage: Int = 1
@@ -131,8 +138,10 @@ class AnnouncementViewModel(
                     )
                 }
                 fullSeen = true
-            } catch (_: Throwable) {
-                // 失败保留旧 state(若 partial 已 emit 则保留 partial)
+            } catch (t: Throwable) {
+                // 失败保留旧 state(若 partial 已 emit 则保留 partial)，但要弹一次性提示——
+                // 转圈停了会被误读成"刷新完成、列表就是最新"
+                _refreshFailed.tryEmit(t.toUserMessage("刷新失败"))
             } finally {
                 _isRefreshing.value = false
             }

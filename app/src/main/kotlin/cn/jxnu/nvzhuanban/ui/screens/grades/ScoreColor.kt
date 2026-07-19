@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.Color
 internal fun scoreColor(score: String, zeroMeansUnfilled: Boolean = false): Color {
     val num = score.toFloatOrNull()
     return when {
+        // 等级制挂科（不及格 / 不合格 / 不通过）必须与低分同档警示，不能混进"良好"色
+        num == null && score.trim().startsWith("不") -> MaterialTheme.colorScheme.error
         num == null -> MaterialTheme.colorScheme.tertiary  // "良好"、"通过" 等
         zeroMeansUnfilled && num == 0f -> MaterialTheme.colorScheme.onSurfaceVariant
         num >= 90 -> MaterialTheme.colorScheme.primary

@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -72,6 +73,7 @@ import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+import cn.jxnu.nvzhuanban.ui.components.rememberTransientErrorSnackbar
 import cn.jxnu.nvzhuanban.ui.theme.AppShape
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -108,6 +110,7 @@ fun AnnouncementScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(rememberTransientErrorSnackbar(viewModel.refreshFailed)) },
         topBar = {
             if (isSearchActive) {
                 SearchTopBar(

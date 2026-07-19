@@ -35,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -62,6 +63,7 @@ import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
+import cn.jxnu.nvzhuanban.ui.components.rememberTransientErrorSnackbar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,6 +75,7 @@ fun TrainingPlanScreen(
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     Scaffold(
+        snackbarHost = { SnackbarHost(rememberTransientErrorSnackbar(viewModel.refreshFailed)) },
         topBar = {
             TopAppBar(
                 title = { Text("培养方案") },
