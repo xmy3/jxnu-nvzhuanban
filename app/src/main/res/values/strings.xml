@@ -60,6 +60,12 @@
     <string name="calendar_empty">未解析到校历条目</string>
     <string name="calendar_badge_correction">调整版</string>
     <string name="calendar_open_failed">没有可打开该文件的应用</string>
+    <string name="calendar_doc_open_in_browser">在浏览器中打开</string>
+    <string name="calendar_doc_load_failed">校历文件加载失败</string>
+    <string name="calendar_doc_empty_response">校历文件返回空响应</string>
+    <string name="calendar_doc_not_pdf">文件内容异常，可尝试右上角在浏览器中打开</string>
+    <string name="calendar_doc_page_cd">校历第%1$d页</string>
+    <string name="calendar_doc_pages_truncated">页数过多，仅显示前 %1$d 页</string>
 
     <!-- 师生查询（合并的搜索入口） -->
     <string name="people_search_title">师生查询</string>

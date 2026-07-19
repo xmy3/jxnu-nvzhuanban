@@ -1,6 +1,7 @@
 package cn.jxnu.nvzhuanban.ui.screens.calendar
 
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -42,6 +43,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +61,7 @@ import cn.jxnu.nvzhuanban.data.model.CalendarEntry
 import cn.jxnu.nvzhuanban.data.model.CalendarFileType
 import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.EmptyState
+import cn.jxnu.nvzhuanban.ui.components.FullScreenImageViewer
 import cn.jxnu.nvzhuanban.ui.components.RefreshIconButton
 import cn.jxnu.nvzhuanban.ui.components.StateScaffold
 import cn.jxnu.nvzhuanban.ui.components.rememberTransientErrorSnackbar
@@ -65,11 +70,14 @@ import cn.jxnu.nvzhuanban.ui.components.rememberTransientErrorSnackbar
 @Composable
 fun CalendarScreen(
     onBack: () -> Unit = {},
+    onOpenDocument: (CalendarEntry) -> Unit = {},
     viewModel: CalendarViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    // 非空时全屏展示该 JPG 条目（早年校历是图片文件，app 内直接看，不外跳）
+    var imageEntry by remember { mutableStateOf<CalendarEntry?>(null) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(rememberTransientErrorSnackbar(viewModel.refreshFailed)) },
@@ -104,36 +112,61 @@ fun CalendarScreen(
                     ) {
                         items(entries, key = { it.url }) { entry ->
                             CalendarRow(entry = entry, onClick = {
-                                // 校历 URL 是 .pdf / .doc / .xls 等带后缀文件。Android 11+ 在 MIME 解析
-                                // 路径上受 package visibility 限制；先尝试 BROWSABLE 把它当 web link
-                                // 交给浏览器（Chrome 内置 PDF viewer），失败再 createChooser 兜底
-                                // （chooser 总能 startActivity，至少弹出系统选择器或「无应用可处理」）。
-                                val uri = Uri.parse(entry.url)
-                                val browsable = Intent(Intent.ACTION_VIEW, uri)
-                                    .addCategory(Intent.CATEGORY_BROWSABLE)
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                try {
-                                    context.startActivity(browsable)
-                                } catch (_: ActivityNotFoundException) {
-                                    val chooser = Intent.createChooser(
-                                        Intent(Intent.ACTION_VIEW, uri),
-                                        entry.title,
-                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    try {
-                                        context.startActivity(chooser)
-                                    } catch (_: ActivityNotFoundException) {
-                                        Toast.makeText(
-                                            context,
-                                            context.getString(R.string.calendar_open_failed),
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                    }
+                                // 尽量留在 app 内：PDF 走原生渲染查看页，JPG 走全屏图片查看器；
+                                // DOC/XLS/HTM 等无法原生渲染的早年格式仍外跳系统应用兜底。
+                                when (entry.fileType) {
+                                    CalendarFileType.PDF -> onOpenDocument(entry)
+                                    CalendarFileType.JPG -> imageEntry = entry
+                                    else -> openCalendarUrlExternally(context, entry.url, entry.title)
                                 }
                             })
                         }
                     }
                 }
             }
+        }
+    }
+
+    imageEntry?.let { entry ->
+        FullScreenImageViewer(
+            url = entry.url,
+            contentDescription = entry.title,
+            onDismiss = { imageEntry = null },
+        )
+    }
+}
+
+/**
+ * 外部打开校历文件（浏览器 / 系统对应应用）。
+ *
+ * 校历 URL 是 .pdf / .doc / .xls 等带后缀文件。Android 11+ 在 MIME 解析路径上受
+ * package visibility 限制；先尝试 BROWSABLE 把它当 web link 交给浏览器（Chrome 内置
+ * PDF viewer），失败再 createChooser 兜底（chooser 总能 startActivity，至少弹出系统
+ * 选择器或「无应用可处理」）。
+ *
+ * 现在只作为兜底：PDF/JPG 已在 app 内查看，这里服务 DOC/XLS/HTM 条目和
+ * [CalendarDocumentScreen] 顶栏的「在浏览器中打开」逃生门。
+ */
+internal fun openCalendarUrlExternally(context: Context, url: String, title: String) {
+    val uri = Uri.parse(url)
+    val browsable = Intent(Intent.ACTION_VIEW, uri)
+        .addCategory(Intent.CATEGORY_BROWSABLE)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(browsable)
+    } catch (_: ActivityNotFoundException) {
+        val chooser = Intent.createChooser(
+            Intent(Intent.ACTION_VIEW, uri),
+            title,
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(chooser)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(
+                context,
+                context.getString(R.string.calendar_open_failed),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 }

@@ -54,6 +54,7 @@ import cn.jxnu.nvzhuanban.data.repository.AuthRepository
 import cn.jxnu.nvzhuanban.data.storage.AnnouncementUnreadState
 import cn.jxnu.nvzhuanban.ui.screens.announcement.AnnouncementDetailScreen
 import cn.jxnu.nvzhuanban.ui.screens.announcement.AnnouncementScreen
+import cn.jxnu.nvzhuanban.ui.screens.calendar.CalendarDocumentScreen
 import cn.jxnu.nvzhuanban.ui.screens.calendar.CalendarScreen
 import cn.jxnu.nvzhuanban.ui.screens.classroom.ClassroomScreen
 import cn.jxnu.nvzhuanban.ui.screens.courseoffering.CourseOfferingScreen
@@ -80,6 +81,14 @@ object Routes {
     const val CLASSROOM = "classroom"
     const val TRAINING_PLAN = "training_plan"
     const val CALENDAR = "calendar"
+
+    /**
+     * 校历 PDF 的 app 内查看页。url 是完整 https 文件地址（含 `:/`），title 用作顶栏标题，
+     * 两段都必须 [android.net.Uri.encode]（同师生详情路由的 path 参数纪律）。
+     */
+    const val CALENDAR_DOCUMENT = "calendar_document/{url}/{title}"
+    fun calendarDocument(url: String, title: String) =
+        "calendar_document/${android.net.Uri.encode(url)}/${android.net.Uri.encode(title)}"
     /**
      * 开课查询（Public_Kkap）：按学期/学院/教室/课程/教师检索全校开课。
      *
@@ -317,7 +326,27 @@ fun AppNav() {
                 TrainingPlanScreen(onBack = { nav.popBackStack() })
             }
             composable(Routes.CALENDAR) {
-                CalendarScreen(onBack = { nav.popBackStack() })
+                CalendarScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenDocument = { entry ->
+                        nav.navigate(Routes.calendarDocument(entry.url, entry.title))
+                    },
+                )
+            }
+            composable(
+                route = Routes.CALENDAR_DOCUMENT,
+                arguments = listOf(
+                    androidx.navigation.navArgument("url") { type = androidx.navigation.NavType.StringType },
+                    androidx.navigation.navArgument("title") { type = androidx.navigation.NavType.StringType },
+                ),
+            ) { backStackEntry ->
+                val url = backStackEntry.arguments?.getString("url").orEmpty()
+                val title = backStackEntry.arguments?.getString("title").orEmpty()
+                CalendarDocumentScreen(
+                    url = url,
+                    title = title,
+                    onBack = { nav.popBackStack() },
+                )
             }
             composable(
                 route = Routes.COURSE_OFFERING,
