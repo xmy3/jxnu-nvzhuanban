@@ -33,6 +33,9 @@ object JxnuUrls {
     const val PAGE_GRADE = "$JWC_BASE/MyControl/All_Display.aspx?UserControl=xfz_cj3.ascx&Action=Personal"
     const val PAGE_GRADUATION_AUDIT = "$JWC_BASE/MyControl/All_Display.aspx?UserControl=xfz_bysh.ascx&Action=Personal"
 
+    /** 本人学籍/身份信息校对表（我的 → 基本信息）。含考生号/身份证等强 PII，需登录会话。 */
+    const val PAGE_STUDENT_INFO = "$JWC_BASE/MyControl/Student_InforCheck.aspx"
+
     /**
      * 教工检索页（公共服务 → 教工信息）。
      * 表单字段：`_ctl1:txtKeyWord` + `_ctl1:ddlType`（姓名/教号）+ `_ctl1:ddlSQLType`（精确/模糊）+ `_ctl1:btnSearch`，

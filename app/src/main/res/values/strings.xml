@@ -53,6 +53,7 @@
 
     <!-- 开课查询（Public_Kkap 开课安排检索） -->
     <string name="course_offering_title">开课查询</string>
+    <string name="student_info_title">基本信息</string>
 
     <!-- 校历（教学周历索引） -->
     <string name="calendar_title">校历</string>

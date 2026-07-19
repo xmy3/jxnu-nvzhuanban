@@ -23,13 +23,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.ListAlt
 import androidx.compose.material.icons.automirrored.outlined.Logout
-import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.Brightness6
 import androidx.compose.material.icons.outlined.Brightness7
@@ -43,6 +43,8 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -127,6 +129,7 @@ import java.time.LocalDateTime
 fun ProfileScreen(
     onLogout: () -> Unit,
     onOpenGrades: () -> Unit,
+    onOpenStudentInfo: () -> Unit,
     onOpenClassroom: () -> Unit,
     onOpenExams: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
@@ -211,6 +214,8 @@ fun ProfileScreen(
                         showAvatar = showAvatar,
                         enrichStatus = data.enrichStatus,
                         onRetryEnrich = viewModel::retryEnrich,
+                        onAvatarToggle = AvatarPrefs::setShowAvatar,
+                        onOpenStudentInfo = onOpenStudentInfo,
                     )
                 }
                 item {
@@ -232,10 +237,8 @@ fun ProfileScreen(
                 }
                 item {
                     SettingsBlock(
-                        showAvatar = showAvatar,
                         versionName = versionName,
                         latestRelease = latestRelease,
-                        onAvatarToggle = AvatarPrefs::setShowAvatar,
                         onAddWidgetClick = { showWidgetDialog = true },
                         onAboutClick = { showAboutDialog = true },
                         onCheckUpdate = {
@@ -324,9 +327,13 @@ private fun UserCard(
     showAvatar: Boolean,
     enrichStatus: EnrichStatus,
     onRetryEnrich: () -> Unit,
+    onAvatarToggle: (Boolean) -> Unit,
+    onOpenStudentInfo: () -> Unit,
 ) {
     // 主角卡：斜向渐变（primary → primary/tertiary 混色）+ 右上/左下两个大半透明装饰圆，
     // 比旧的水平 primary→primary(0.8) 更有层次。装饰圆走 drawBehind，不参与布局与语义。
+    // 整卡可点进「基本信息」（尾部 chevron 提示）；头像本身是「显示学生头像」开关，
+    // 右下角眼睛角标指示当前状态——两个入口都收进卡内，不再占用工具区/设置区。
     val primary = MaterialTheme.colorScheme.primary
     val tertiary = MaterialTheme.colorScheme.tertiary
     val decorColor = MaterialTheme.colorScheme.onPrimary
@@ -351,32 +358,60 @@ private fun UserCard(
                     center = Offset(size.width * 0.08f, size.height * 1.05f),
                 )
             }
+            .clickable(role = Role.Button, onClick = onOpenStudentInfo)
             .padding(20.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // 学生头像：默认关闭，需在"设置 → 显示学生头像"打开。开启后用 OkHttp + 应用 session
-            // cookie 取 jwc /MyControl 上的图；失败回落到 Person 图标
-            RemoteJwcImage(
-                url = user.avatarUrl?.takeIf { showAvatar },
-                contentDescription = stringResource(R.string.cd_avatar),
+            // 学生头像：默认关闭（隐私），点头像本身即可切换加载。开启后用 OkHttp + 应用
+            // session cookie 取 jwc /MyControl 上的图；失败回落到 Person 图标
+            Box(
                 modifier = Modifier
-                    .size(64.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .border(
-                        width = 1.5.dp,
-                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f),
-                        shape = RoundedCornerShape(20.dp),
-                    )
-                    .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)),
-                fallback = {
+                    .toggleable(
+                        value = showAvatar,
+                        role = Role.Switch,
+                        onValueChange = onAvatarToggle,
+                    ),
+            ) {
+                RemoteJwcImage(
+                    url = user.avatarUrl?.takeIf { showAvatar },
+                    contentDescription = stringResource(R.string.cd_avatar),
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(
+                            width = 1.5.dp,
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(20.dp),
+                        )
+                        .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)),
+                    fallback = {
+                        Icon(
+                            imageVector = Icons.Outlined.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(36.dp),
+                        )
+                    },
+                )
+                // 开关状态角标：睁眼=正在显示头像，闭眼=已关闭（不发头像请求）
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(3.dp)
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.92f)),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Icon(
-                        imageVector = Icons.Outlined.Person,
+                        imageVector = if (showAvatar) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(36.dp),
+                        tint = primary,
+                        modifier = Modifier.size(12.dp),
                     )
-                },
-            )
+                }
+            }
             Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -435,6 +470,12 @@ private fun UserCard(
                     }
                 }
             }
+            // 整卡可点的视觉暗示：进「基本信息」（学籍校对表）
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
+            )
         }
     }
 }
@@ -554,7 +595,8 @@ private fun ToolsBlock(
     onOpenCourseOffering: () -> Unit,
     onOpenTheme: () -> Unit,
 ) {
-    // 二级功能集合：考试 / 培养方案已升级进上方数据摘要条，这里 5 个入口单行排满。
+    // 二级功能集合：考试 / 培养方案已升级进上方数据摘要条，基本信息挂在顶部用户卡上，
+    // 这里 5 个入口单行排满。
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = AppShape.card,
@@ -631,10 +673,8 @@ private fun ToolTile(
 
 @Composable
 private fun SettingsBlock(
-    showAvatar: Boolean,
     versionName: String,
     latestRelease: AppRelease?,
-    onAvatarToggle: (Boolean) -> Unit,
     onAddWidgetClick: () -> Unit,
     onAboutClick: () -> Unit,
     onCheckUpdate: () -> Unit,
@@ -652,14 +692,6 @@ private fun SettingsBlock(
                 title = "添加桌面小组件",
                 subtitle = "把「今日课表」放到手机桌面",
                 onClick = onAddWidgetClick,
-            )
-            SettingsDivider()
-            SettingsToggleRow(
-                icon = Icons.Outlined.AccountCircle,
-                title = "显示学生头像",
-                subtitle = "关闭时不向教务系统请求头像",
-                checked = showAvatar,
-                onCheckedChange = onAvatarToggle,
             )
             SettingsDivider()
             SettingsRow(
@@ -689,59 +721,6 @@ private fun SettingsBlock(
                 onClick = onLogoutClick,
             )
         }
-    }
-}
-
-@Composable
-private fun SettingsToggleRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String?,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    enabled: Boolean = true,
-) {
-    val contentAlpha = if (enabled) 1f else 0.5f
-    // toggleable 把整行做成单个 Switch 语义节点（TalkBack 合并播报标签+开关状态），
-    // 行内 Switch 的 onCheckedChange 置 null 退化为纯视觉指示器，避免出现第二个焦点
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .toggleable(
-                value = checked,
-                enabled = enabled,
-                role = Role.Switch,
-                onValueChange = onCheckedChange,
-            )
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha),
-            modifier = Modifier.size(22.dp),
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha),
-            )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha),
-                )
-            }
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = null,
-            enabled = enabled,
-        )
     }
 }
 

@@ -64,6 +64,7 @@ import cn.jxnu.nvzhuanban.ui.screens.login.LoginScreen
 import cn.jxnu.nvzhuanban.ui.screens.peoplesearch.PeopleSearchScreen
 import cn.jxnu.nvzhuanban.ui.screens.peoplesearch.PersonResult
 import cn.jxnu.nvzhuanban.ui.screens.profile.ProfileScreen
+import cn.jxnu.nvzhuanban.ui.screens.profile.StudentInfoScreen
 import cn.jxnu.nvzhuanban.ui.screens.schedule.ScheduleScreen
 import cn.jxnu.nvzhuanban.ui.screens.students.StudentDetailScreen
 import cn.jxnu.nvzhuanban.ui.screens.teachers.TeacherDetailScreen
@@ -74,6 +75,7 @@ object Routes {
     const val LOGIN = "login"
     const val SCHEDULE = "schedule"
     const val GRADES = "grades"
+    const val STUDENT_INFO = "student_info"
     const val EXAMS = "exams"
     const val ANNOUNCEMENT = "announcement"
     const val CLASSROOM = "classroom"
@@ -298,6 +300,9 @@ fun AppNav() {
             composable(Routes.GRADES) {
                 GradesScreen(onBack = { nav.popBackStack() })
             }
+            composable(Routes.STUDENT_INFO) {
+                StudentInfoScreen(onBack = { nav.popBackStack() })
+            }
             composable(Routes.EXAMS) {
                 ExamsScreen(onBack = { nav.popBackStack() })
             }
@@ -434,6 +439,7 @@ fun AppNav() {
                         }
                     },
                     onOpenGrades = { nav.navigate(Routes.GRADES) },
+                    onOpenStudentInfo = { nav.navigate(Routes.STUDENT_INFO) },
                     onOpenClassroom = { nav.navigate(Routes.CLASSROOM) },
                     onOpenExams = { nav.navigate(Routes.EXAMS) },
                     onOpenTrainingPlan = { nav.navigate(Routes.TRAINING_PLAN) },
