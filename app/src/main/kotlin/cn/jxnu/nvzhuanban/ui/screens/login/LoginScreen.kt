@@ -1,7 +1,6 @@
 package cn.jxnu.nvzhuanban.ui.screens.login
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -151,10 +150,12 @@ private fun BrandHeader() {
                 .background(MaterialTheme.colorScheme.primary),
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                painter = painterResource(R.mipmap.ic_launcher_monochrome),
+            Icon(
+                painter = painterResource(R.drawable.ic_brand_logo),
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.size(60.dp),
+                // onPrimary 而非固定白色：深色主题的 primary 是浅粉，白标会没进底色里
+                tint = MaterialTheme.colorScheme.onPrimary,
             )
         }
         Spacer(Modifier.height(16.dp))

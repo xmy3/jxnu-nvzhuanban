@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- 女专办品牌标（裸标形态）：女专红描边、透明底，适合白底文档 / 印刷。
+       深色背景上请改用 #FFB3B6（主题 DarkPrimary）或白色。母版几何见 docs/brand.md。 -->
+  <g fill="none" stroke="#A91D34" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M176 592 Q380 608 512 672 Q644 608 848 592" stroke-width="62"/>
+    <path d="M152 714 Q370 732 512 800 Q654 732 872 714" stroke-width="62"/>
+    <path d="M344 438 L486 570 L736 250" stroke-width="100"/>
+  </g>
+</svg>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    自适应图标前景：白色品牌标（书 + 对勾），几何与 ic_brand_logo 同一母版。
+    内容缩放 0.68 后所有端点都落在 66/108 安全区内（最远点半径 281 < 312，1024 视口坐标）。
+    monochrome 层复用本文件（白描边 = 全 alpha，系统按 alpha 蒙版着色）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <group
+        android:scaleX="0.68"
+        android:scaleY="0.68"
+        android:pivotX="512"
+        android:pivotY="512">
+        <path
+            android:pathData="M176,592 Q380,608 512,672 Q644,608 848,592"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="62"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="@android:color/transparent" />
+        <path
+            android:pathData="M152,714 Q370,732 512,800 Q654,732 872,714"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="62"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="@android:color/transparent" />
+        <path
+            android:pathData="M344,438 L486,570 L736,250"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="100"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="@android:color/transparent" />
+    </group>
+</vector>

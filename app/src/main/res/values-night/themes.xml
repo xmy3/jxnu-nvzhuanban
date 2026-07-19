@@ -8,10 +8,10 @@
         <item name="android:enforceStatusBarContrast" tools:targetApi="q">false</item>
     </style>
 
-    <!-- Splash 主题深色版（女专红在深色模式下保持不变，足够对比） -->
+    <!-- Splash 主题深色版（女专红在深色模式下保持不变，足够对比；图标与浅色共用同一矢量资源） -->
     <style name="Theme.Nvzhuanban.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/brand_nvzhuan_red</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_monochrome</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
         <item name="postSplashScreenTheme">@style/Theme.Nvzhuanban</item>
     </style>
 

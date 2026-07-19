@@ -18,8 +18,8 @@
     <style name="Theme.Nvzhuanban.Splash" parent="Theme.SplashScreen">
         <!-- 背景：女专红，保持启动一致性（在浅色 / 深色模式都是这个红） -->
         <item name="windowSplashScreenBackground">@color/brand_nvzhuan_red</item>
-        <!-- 前景图标：独立的 splash 资源 (288dp 画布、192dp 内容)，按 Android 12+ SplashScreen 规范切片，比 launcher monochrome 分辨率更高，避免被系统拉伸模糊 -->
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_splash_logo</item>
+        <!-- 前景图标：矢量品牌标（288dp 画布、内容落在系统 2/3 圆形可视域内），浅色/深色主题共用同一资源，任意分辨率无损 -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
         <!-- Splash 结束后切换到的真实主题 -->
         <item name="postSplashScreenTheme">@style/Theme.Nvzhuanban</item>
     </style>

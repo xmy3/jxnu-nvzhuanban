@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- 女专办 app 图标形态：女专红渐变圆角方 + 白色品牌标「开卷有成」。
+       母版几何与 app/src/main/res/drawable/ic_brand_logo.xml 同源，改一处要同步另一处（见 docs/brand.md）。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#B72440"/>
+      <stop offset="1" stop-color="#8F1226"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="232" fill="url(#bg)"/>
+  <g transform="translate(163.84 163.84) scale(0.68)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M176 592 Q380 608 512 672 Q644 608 848 592" stroke-width="62"/>
+    <path d="M152 714 Q370 732 512 800 Q654 732 872 714" stroke-width="62"/>
+    <path d="M344 438 L486 570 L736 250" stroke-width="100"/>
+  </g>
+</svg>

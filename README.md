@@ -1,6 +1,16 @@
-# 女专办
+<div align="center">
+  <img src="docs/assets/brand/logo.svg" width="128" alt="女专办品牌标：翻开的书页上一枚上扬对勾">
+  <h1>女专办</h1>
+  <p><strong>江西师范大学 · 掌上教务</strong></p>
+  <p>
+    <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/xmy3/jxnu-nvzhuanban?label=%E6%9C%80%E6%96%B0%E7%89%88&color=A91D34" alt="最新版"></a>
+    <a href="../../actions/workflows/android.yml"><img src="https://github.com/xmy3/jxnu-nvzhuanban/actions/workflows/android.yml/badge.svg" alt="CI"></a>
+    <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 8.0+">
+    <img src="https://img.shields.io/badge/Kotlin%20%C2%B7%20Compose%20%C2%B7%20M3-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin + Compose + Material 3">
+  </p>
+</div>
 
-[江西师范大学] 教务系统的非官方 Android 客户端，灵感来自「酱紫办」。Kotlin + Jetpack Compose + Material 3，单 Gradle 模块。
+[江西师范大学] 教务系统的非官方 Android 客户端，灵感来自「酱紫办」。Kotlin + Jetpack Compose + Material 3，单 Gradle 模块。品牌标识与配色规范见 [docs/brand.md](docs/brand.md)。
 
 > ⚠️ **本项目与江西师范大学官方、教务处、信息办均无任何关联。** 所有数据均来自访问者本人在 `jwc.jxnu.edu.cn` 上能正常浏览的页面，App 仅做客户端渲染。
 

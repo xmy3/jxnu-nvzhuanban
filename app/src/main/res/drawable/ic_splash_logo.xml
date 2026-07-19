@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    启动页图标（windowSplashScreenAnimatedIcon）：白色品牌标，浅色/深色主题共用。
+    Android 12+ 会把它裁进直径 2/3 画布的圆形可视域；内容缩放 0.68 后
+    最远端点半径 281（1024 视口坐标）< 341 可视半径，不会被裁。
+    背景色由主题的 windowSplashScreenBackground（女专红）提供。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <group
+        android:scaleX="0.68"
+        android:scaleY="0.68"
+        android:pivotX="512"
+        android:pivotY="512">
+        <path
+            android:pathData="M176,592 Q380,608 512,672 Q644,608 848,592"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="62"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="@android:color/transparent" />
+        <path
+            android:pathData="M152,714 Q370,732 512,800 Q654,732 872,714"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="62"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="@android:color/transparent" />
+        <path
+            android:pathData="M344,438 L486,570 L736,250"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="100"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="@android:color/transparent" />
+    </group>
+</vector>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    女专办品牌标「开卷有成」：翻开的双层书页 + 上扬对勾。
+    母版几何（1024 视口）与 docs/assets/brand/logo-mark.svg 同源，改一处要同步另一处。
+    描边全部为白色，应用内使用时通过 Icon(tint=…) 着色。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path
+        android:pathData="M176,592 Q380,608 512,672 Q644,608 848,592"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="62"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent" />
+    <path
+        android:pathData="M152,714 Q370,732 512,800 Q654,732 872,714"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="62"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent" />
+    <path
+        android:pathData="M344,438 L486,570 L736,250"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="100"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent" />
+</vector>
