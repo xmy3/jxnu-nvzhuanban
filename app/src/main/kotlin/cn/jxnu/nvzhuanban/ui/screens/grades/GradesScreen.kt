@@ -187,6 +187,12 @@ private fun GradesList(
                 started = statsStarted,
             )
         }
+        // 至少两个学期才构成趋势；单学期时不渲染（组件内部也会再判一次）
+        if (semesters.size >= 2) {
+            item(key = "trend", contentType = "trend") {
+                SemesterTrendCard(semesters = semesters)
+            }
+        }
         semesters.forEach { sem ->
             item(key = "header_${sem.semester}", contentType = "semHeader") { SemesterHeader(sem) }
             items(sem.grades, key = { it.id }, contentType = { "grade" }) { g ->
