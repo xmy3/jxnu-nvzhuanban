@@ -2,6 +2,7 @@ package cn.jxnu.nvzhuanban.ui.screens.announcement
 
 import android.content.Context
 import android.content.Intent
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,9 +10,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,6 +31,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.BrokenImage
+import androidx.compose.material.icons.outlined.FormatSize
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material3.Button
@@ -38,12 +42,17 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -60,10 +70,12 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,6 +85,9 @@ import cn.jxnu.nvzhuanban.data.model.ArticleBlock
 import cn.jxnu.nvzhuanban.data.model.ArticleDetail
 import cn.jxnu.nvzhuanban.data.model.InlineRun
 import cn.jxnu.nvzhuanban.data.model.InlineStyle
+import cn.jxnu.nvzhuanban.data.model.ParagraphAlign
+import cn.jxnu.nvzhuanban.data.storage.ArticleFontSize
+import cn.jxnu.nvzhuanban.data.storage.ThemePrefs
 import cn.jxnu.nvzhuanban.ui.components.BackNavigationIcon
 import cn.jxnu.nvzhuanban.ui.components.FullScreenImageViewer
 import cn.jxnu.nvzhuanban.ui.components.RemoteJwcImage
@@ -93,6 +108,9 @@ fun AnnouncementDetailScreen(
     )
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    // 阅读字号档位：外观偏好（ThemePrefs 持久化、登出不清），整篇正文实时缩放
+    val fontSize by ThemePrefs.articleFontSize.collectAsStateWithLifecycle()
+    var showFontSizeSheet by remember { mutableStateOf(false) }
     // 「在浏览器中打开」始终可点：哪怕详情解析失败，也允许用户用浏览器查看原文
     val externalUrl = remember(articleId) {
         if (articleId.matches(Regex("""\d+"""))) {
@@ -108,6 +126,12 @@ fun AnnouncementDetailScreen(
                 title = { Text(stringResource(R.string.announcement_detail_title)) },
                 navigationIcon = { BackNavigationIcon(onBack) },
                 actions = {
+                    IconButton(onClick = { showFontSizeSheet = true }) {
+                        Icon(
+                            Icons.Outlined.FormatSize,
+                            contentDescription = stringResource(R.string.announcement_font_size_action),
+                        )
+                    }
                     if (externalUrl != null) {
                         IconButton(onClick = { openExternalHttpUrl(context, externalUrl) }) {
                             Icon(
@@ -137,6 +161,7 @@ fun AnnouncementDetailScreen(
             } else {
                 ArticleBody(
                     detail = detail,
+                    fontScale = fontSize.scale,
                     onImageClick = { url -> imageViewerUrl = url },
                 )
             }
@@ -149,6 +174,14 @@ fun AnnouncementDetailScreen(
             url = url,
             contentDescription = null,
             onDismiss = { imageViewerUrl = null },
+        )
+    }
+
+    if (showFontSizeSheet) {
+        FontSizeSheet(
+            current = fontSize,
+            onSelect = ThemePrefs::setArticleFontSize,
+            onDismiss = { showFontSizeSheet = false },
         )
     }
 }
@@ -215,59 +248,69 @@ private fun LoginRequiredView(onLogin: () -> Unit) {
 @Composable
 private fun ArticleBody(
     detail: ArticleDetail,
+    fontScale: Float,
     onImageClick: (String) -> Unit,
 ) {
+    // 阅读字号：把用户档位乘进 LocalDensity.fontScale（叠加在系统字体缩放之上）。
+    // 标题 / 段落 / 表格 / 附件名等所有 sp 文本整篇成比例缩放，dp 尺寸（图片、间距）不动。
+    val density = LocalDensity.current
+    val readerDensity = remember(density, fontScale) {
+        Density(density.density, density.fontScale * fontScale)
+    }
     // SelectionContainer 让正文（标题 / 时间 / 段落 / 表格文字）支持长按选中 + 复制。
     // Compose 1.7 起，选择手势与 InlineRun.Link 的点击、图片/附件的 clickable 可共存。
     // 已知限制：LazyColumn 会回收滚出屏幕的 item，跨越回收边界的选择会断；可见区域内选/复制正常。
-    SelectionContainer(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-        ) {
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                if (detail.title.isNotBlank()) {
-                    Text(
-                        text = detail.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                if (detail.postedAt.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = detail.postedAt,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                HorizontalDivider(
-                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
-            }
-
-            if (detail.blocks.isEmpty()) {
+    CompositionLocalProvider(LocalDensity provides readerDensity) {
+        SelectionContainer(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+            ) {
                 item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "正文为空",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (detail.title.isNotBlank()) {
+                        Text(
+                            text = detail.title,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    if (detail.postedAt.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = detail.postedAt,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    HorizontalDivider(
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant,
                     )
                 }
-            }
 
-            // contentType 让 LazyColumn 只在同类 block（段落/图片/表格…）之间复用节点，
-            // 避免滚出屏的 Table 被拿去承载 Paragraph 这类近似整棵重建的错配
-            items(detail.blocks, contentType = { it::class }) { block ->
-                Spacer(modifier = Modifier.height(8.dp))
-                BlockView(block, onImageClick = onImageClick)
-            }
+                if (detail.blocks.isEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = stringResource(R.string.announcement_detail_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
 
-            item { Spacer(modifier = Modifier.height(32.dp)) }
+                // contentType 让 LazyColumn 只在同类 block（段落/图片/表格…）之间复用节点，
+                // 避免滚出屏的 Table 被拿去承载 Paragraph 这类近似整棵重建的错配
+                items(detail.blocks, contentType = { it::class }) { block ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    BlockView(block, onImageClick = onImageClick)
+                }
+
+                item { Spacer(modifier = Modifier.height(32.dp)) }
+            }
         }
     }
 }
@@ -278,7 +321,7 @@ private fun BlockView(
     onImageClick: (String) -> Unit,
 ) {
     when (block) {
-        is ArticleBlock.Paragraph -> ParagraphView(block.runs)
+        is ArticleBlock.Paragraph -> ParagraphView(block.runs, block.align)
         is ArticleBlock.Image -> ImageBlockView(block, onImageClick = onImageClick)
         is ArticleBlock.Table -> TableBlockView(block.rows)
         is ArticleBlock.Attachment -> AttachmentView(block)
@@ -290,7 +333,7 @@ private fun BlockView(
 }
 
 @Composable
-private fun ParagraphView(runs: List<InlineRun>) {
+private fun ParagraphView(runs: List<InlineRun>, align: ParagraphAlign) {
     val context = LocalContext.current
     val linkColor = MaterialTheme.colorScheme.primary
     val baseColor = MaterialTheme.colorScheme.onSurface
@@ -301,12 +344,26 @@ private fun ParagraphView(runs: List<InlineRun>) {
             openExternalHttpUrl(context, url)
         }
     }
+    // 中文正文阅读优化：行高提到 1.7 倍字号（M3 bodyLarge 默认 1.5），
+    // 断行策略用 Paragraph 级（高质量换行，长词/URL 不再突兀地撑破行）。
+    val base = MaterialTheme.typography.bodyLarge
+    val readingStyle = remember(base) {
+        base.copy(lineHeight = base.fontSize * 1.7f, lineBreak = LineBreak.Paragraph)
+    }
     Text(
         text = annotated,
-        style = MaterialTheme.typography.bodyLarge,
+        style = readingStyle,
         color = baseColor,
+        textAlign = align.toTextAlign(),
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+/** START 返回 null（沿用样式默认的起始对齐），避免覆盖 RTL 语境下的自然方向。 */
+private fun ParagraphAlign.toTextAlign(): TextAlign? = when (this) {
+    ParagraphAlign.START -> null
+    ParagraphAlign.CENTER -> TextAlign.Center
+    ParagraphAlign.END -> TextAlign.End
 }
 
 @Composable
@@ -323,7 +380,7 @@ private fun ImageBlockView(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClickLabel = "查看大图") { onImageClick(image.src) },
+            .clickable(onClickLabel = stringResource(R.string.announcement_view_image)) { onImageClick(image.src) },
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
@@ -331,7 +388,7 @@ private fun ImageBlockView(
         RemoteJwcImage(
             url = image.src,
             // jwc 的 img 几乎从不写 alt；给个中文兜底，TalkBack 不至于聚焦到无名称的可点目标
-            contentDescription = image.alt ?: "通知配图",
+            contentDescription = image.alt ?: stringResource(R.string.announcement_image_fallback_desc),
             modifier = Modifier.fillMaxWidth(),
             placeholderModifier = Modifier
                 .fillMaxWidth()
@@ -368,13 +425,22 @@ private fun TableBlockView(rows: List<List<List<InlineRun>>>) {
                 if (rowIndex > 0) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                Row(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
+                Row(
+                    modifier = Modifier
+                        // IntrinsicSize.Min 让竖直分隔线 fillMaxHeight 跟满整行——
+                        // 多行单元格的行高不再被定高分隔线「截断」
+                        .height(IntrinsicSize.Min)
+                        .background(
+                            if (rowIndex == 0) MaterialTheme.colorScheme.surfaceContainerHigh
+                            else MaterialTheme.colorScheme.surface,
+                        ),
+                ) {
                     repeat(columnCount) { col ->
                         if (col > 0) {
                             Box(
                                 modifier = Modifier
                                     .width(1.dp)
-                                    .height(40.dp)
+                                    .fillMaxHeight()
                                     .background(MaterialTheme.colorScheme.outlineVariant),
                             )
                         }
@@ -392,7 +458,8 @@ private fun TableCellView(runs: List<InlineRun>, isHeader: Boolean) {
     val context = LocalContext.current
     val linkColor = MaterialTheme.colorScheme.primary
     val baseColor = MaterialTheme.colorScheme.onSurface
-    // 表格单元格行底色是 surface（见 TableBlockView 里的 Row.background）。
+    // 表格行底色是 surface / 表头 surfaceContainerHigh（见 TableBlockView），两者亮度几乎一致，
+    // 对内联色的对比度过滤取 surface 即可。
     val background = MaterialTheme.colorScheme.surface
     val annotated = remember(runs, linkColor, baseColor, background, isHeader) {
         val styled = if (isHeader) {
@@ -411,7 +478,8 @@ private fun TableCellView(runs: List<InlineRun>, isHeader: Boolean) {
     }
     Box(
         modifier = Modifier
-            .widthIn(min = 80.dp)
+            // 限最大宽：超长单元格在格内换行阅读，而不是把整行拖成一条无尽的横滚长龙
+            .widthIn(min = 80.dp, max = 280.dp)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Text(
@@ -451,6 +519,58 @@ private fun AttachmentView(attachment: ArticleBlock.Attachment) {
         }
     }
 }
+
+/**
+ * 正文字号选择弹层。四档（小/标准/大/特大），选择即写入
+ * [ThemePrefs.setArticleFontSize]（持久化、登出不清）；弹层不自动关，
+ * 正文在其身后实时缩放，用户可以边看效果边调。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FontSizeSheet(
+    current: ArticleFontSize,
+    onSelect: (ArticleFontSize) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.announcement_font_size_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(16.dp))
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                ArticleFontSize.entries.forEachIndexed { index, size ->
+                    SegmentedButton(
+                        selected = size == current,
+                        onClick = { onSelect(size) },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = ArticleFontSize.entries.size,
+                        ),
+                    ) {
+                        Text(stringResource(size.labelRes))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@get:StringRes
+private val ArticleFontSize.labelRes: Int
+    get() = when (this) {
+        ArticleFontSize.SMALL -> R.string.announcement_font_size_small
+        ArticleFontSize.DEFAULT -> R.string.announcement_font_size_default
+        ArticleFontSize.LARGE -> R.string.announcement_font_size_large
+        ArticleFontSize.XLARGE -> R.string.announcement_font_size_xlarge
+    }
 
 /**
  * 把 [InlineRun] 列表搓成可点击的 [AnnotatedString]。

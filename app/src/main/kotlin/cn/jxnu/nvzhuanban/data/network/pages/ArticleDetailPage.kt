@@ -4,6 +4,7 @@ import cn.jxnu.nvzhuanban.data.model.ArticleBlock
 import cn.jxnu.nvzhuanban.data.model.ArticleDetail
 import cn.jxnu.nvzhuanban.data.model.InlineRun
 import cn.jxnu.nvzhuanban.data.model.InlineStyle
+import cn.jxnu.nvzhuanban.data.model.ParagraphAlign
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
@@ -70,9 +71,12 @@ object ArticleDetailPage {
     /** `style="color:#abcdef; font-weight: bold"` 里抽 color。其他样式当前不支持。 */
     private val STYLE_COLOR = Regex("""(?i)color\s*:\s*([^;]+)""")
 
+    /** `style="text-align: center"`。Word 粘贴正文的居中小标题 / 右对齐落款靠它还原。 */
+    private val STYLE_TEXT_ALIGN = Regex("""(?i)text-align\s*:\s*([a-z-]+)""")
+
     /** 块级 HTML 标签集合，用于判断一个容器内是否有块级子元素。 */
     private val BLOCK_TAGS = setOf(
-        "p", "div", "section", "article", "blockquote",
+        "p", "div", "section", "article", "blockquote", "center",
         "table", "thead", "tbody", "tr", "td", "th",
         "ul", "ol", "li", "hr", "img",
         "h1", "h2", "h3", "h4", "h5", "h6",
@@ -189,7 +193,7 @@ object ArticleDetailPage {
         val tailText = tail.joinToString("") { it.text }
         val match = WRAPPER_OPENER.find(tailText) ?: return null
         val kept = runs.subList(0, tailStart) + takeLeadingChars(tail, match.range.first)
-        return ArticleBlock.Paragraph(trimEdgeRuns(kept))
+        return ArticleBlock.Paragraph(trimEdgeRuns(kept), paragraph.align)
     }
 
     /**
@@ -206,7 +210,7 @@ object ArticleDetailPage {
         if (closerIndex < 0) return null
         if (headText.take(closerIndex).any { it.isLetterOrDigit() }) return null
         val kept = dropLeadingChars(head, closerIndex + 1) + runs.subList(headEnd, runs.size)
-        return ArticleBlock.Paragraph(trimEdgeRuns(kept))
+        return ArticleBlock.Paragraph(trimEdgeRuns(kept), paragraph.align)
     }
 
     /** 连续 Text runs 按扁平字符数截断：保留前 [count] 个字符，样式跟原 run 走。 */
@@ -281,30 +285,31 @@ object ArticleDetailPage {
         private val pendingRuns = mutableListOf<InlineRun>()
 
         fun walk(body: Element): List<ArticleBlock> {
-            walkChildren(body, InlineStyle())
-            flushParagraph()
+            val rootAlign = alignOf(body, ParagraphAlign.START)
+            walkChildren(body, InlineStyle(), rootAlign)
+            flushParagraph(rootAlign)
             return blocks.toList()
         }
 
-        private fun walkChildren(element: Element, style: InlineStyle) {
-            for (node in element.childNodes()) walkNode(node, style)
+        private fun walkChildren(element: Element, style: InlineStyle, align: ParagraphAlign) {
+            for (node in element.childNodes()) walkNode(node, style, align)
         }
 
-        private fun walkNode(node: Node, style: InlineStyle) {
+        private fun walkNode(node: Node, style: InlineStyle, align: ParagraphAlign) {
             when (node) {
                 is TextNode -> {
                     val text = node.text()
                     if (text.isNotEmpty()) pendingRuns += InlineRun.Text(text, style)
                 }
-                is Element -> walkElement(node, style)
+                is Element -> walkElement(node, style, align)
                 else -> Unit
             }
         }
 
-        private fun walkElement(el: Element, style: InlineStyle) {
+        private fun walkElement(el: Element, style: InlineStyle, align: ParagraphAlign) {
             when (el.tagName().lowercase()) {
                 "img" -> {
-                    flushParagraph()
+                    flushParagraph(align)
                     val src = el.absUrl("src")
                     if (src.isNotBlank()) {
                         blocks += ArticleBlock.Image(
@@ -316,12 +321,12 @@ object ArticleDetailPage {
                     }
                 }
                 "table" -> {
-                    flushParagraph()
+                    flushParagraph(align)
                     val rows = parseTable(el)
                     if (rows.isNotEmpty()) blocks += ArticleBlock.Table(rows)
                 }
                 "hr" -> {
-                    flushParagraph()
+                    flushParagraph(align)
                     blocks += ArticleBlock.Divider
                 }
                 "br" -> pendingRuns += InlineRun.LineBreak
@@ -329,7 +334,7 @@ object ArticleDetailPage {
                 "a" -> {
                     val href = el.absUrl("href").trim()
                     if (isAttachment(href)) {
-                        flushParagraph()
+                        flushParagraph(align)
                         val name = el.text().trim().ifBlank { hrefFileName(href) }
                         blocks += ArticleBlock.Attachment(name, href)
                     } else {
@@ -342,56 +347,61 @@ object ArticleDetailPage {
                         ) {
                             pendingRuns += InlineRun.Link(text.trim(), href, style)
                         } else {
-                            walkChildren(el, style)
+                            walkChildren(el, style, align)
                         }
                     }
                 }
 
-                "p", "div", "section", "article", "blockquote" -> {
+                "p", "div", "section", "article", "blockquote", "center" -> {
                     val merged = mergeStyle(style, el)
+                    // 对齐沿块级容器继承——Word 常把 text-align 写在外层包壳 div 上
+                    val mergedAlign = alignOf(el, align)
                     val hasBlockChildren = el.children().any { it.tagName().lowercase() in BLOCK_TAGS }
                     if (hasBlockChildren) {
-                        flushParagraph()
-                        walkChildren(el, merged)
-                        flushParagraph()
+                        // 容器之前累积的散排文本属于外层语境，用外层对齐 flush
+                        flushParagraph(align)
+                        walkChildren(el, merged, mergedAlign)
+                        flushParagraph(mergedAlign)
                     } else {
                         // 纯内联容器：把内容收进 pendingRuns 后立刻 flush，
                         // 维持「div 之间天然换段」语义。
-                        walkChildren(el, merged)
-                        flushParagraph()
+                        walkChildren(el, merged, mergedAlign)
+                        flushParagraph(mergedAlign)
                     }
                 }
 
                 "ul", "ol" -> {
-                    flushParagraph()
-                    walkChildren(el, style)
-                    flushParagraph()
+                    flushParagraph(align)
+                    walkChildren(el, style, align)
+                    flushParagraph(align)
                 }
                 "li" -> {
-                    flushParagraph()
+                    val mergedAlign = alignOf(el, align)
+                    flushParagraph(align)
                     pendingRuns += InlineRun.Text("• ", style)
-                    walkChildren(el, style)
-                    flushParagraph()
+                    walkChildren(el, style, mergedAlign)
+                    flushParagraph(mergedAlign)
                 }
 
                 "h1", "h2", "h3", "h4", "h5", "h6" -> {
                     // 标题在通知正文里很罕见；当作加粗段落即可，省一类型
-                    flushParagraph()
-                    walkChildren(el, style.copy(bold = true))
-                    flushParagraph()
+                    val mergedAlign = alignOf(el, align)
+                    flushParagraph(align)
+                    walkChildren(el, style.copy(bold = true), mergedAlign)
+                    flushParagraph(mergedAlign)
                 }
 
-                "b", "strong" -> walkChildren(el, style.copy(bold = true))
-                "i", "em" -> walkChildren(el, style.copy(italic = true))
-                "u" -> walkChildren(el, style.copy(underline = true))
+                "b", "strong" -> walkChildren(el, style.copy(bold = true), align)
+                "i", "em" -> walkChildren(el, style.copy(italic = true), align)
+                "u" -> walkChildren(el, style.copy(underline = true), align)
 
                 "font" -> {
                     val color = parseHtmlColor(el.attr("color"))
-                    walkChildren(el, if (color != null) style.copy(color = color) else style)
+                    walkChildren(el, if (color != null) style.copy(color = color) else style, align)
                 }
-                "span" -> walkChildren(el, mergeStyle(style, el))
+                "span" -> walkChildren(el, mergeStyle(style, el), align)
 
-                else -> walkChildren(el, style)
+                else -> walkChildren(el, style, align)
             }
         }
 
@@ -411,14 +421,14 @@ object ArticleDetailPage {
         }
 
         private fun collectCellInline(cell: Element): List<InlineRun> {
-            walkChildren(cell, InlineStyle())
+            walkChildren(cell, InlineStyle(), ParagraphAlign.START)
             // 单元格内允许 `<br>` 换行但不需要分段，所以不调 flushParagraph
             val collected = normalise(pendingRuns.toList())
             pendingRuns.clear()
             return collected
         }
 
-        private fun flushParagraph() {
+        private fun flushParagraph(align: ParagraphAlign = ParagraphAlign.START) {
             if (inlineOnly) {
                 // 单元格模式：原本会切段的位置改成在 pendingRuns 里塞一个 LineBreak，
                 // 文本不离开 pendingRuns。collectCellInline 末尾交给 normalise 清理首尾 LB。
@@ -430,7 +440,7 @@ object ArticleDetailPage {
             if (pendingRuns.isEmpty()) return
             val normalised = normalise(pendingRuns.toList())
             pendingRuns.clear()
-            if (normalised.isNotEmpty()) blocks += ArticleBlock.Paragraph(normalised)
+            if (normalised.isNotEmpty()) blocks += ArticleBlock.Paragraph(normalised, align)
         }
 
         /**
@@ -479,6 +489,23 @@ object ArticleDetailPage {
             if (styleAttr.isBlank()) return base
             val color = STYLE_COLOR.find(styleAttr)?.groupValues?.get(1)?.let { parseHtmlColor(it) }
             return if (color != null) base.copy(color = color) else base
+        }
+
+        /**
+         * 元素自身声明的对齐：`style="text-align:…"` 优先，退回传统 `align` 属性，
+         * `<center>` 标签天然居中。声明缺失或值不认识时沿用 [inherited]（对齐随块级容器
+         * 继承，Word 常写在外层包壳上）；显式 left/start/justify 是**重置**语义，不回退继承值。
+         */
+        private fun alignOf(el: Element, inherited: ParagraphAlign): ParagraphAlign {
+            val declared = STYLE_TEXT_ALIGN.find(el.attr("style"))?.groupValues?.get(1)
+                ?: el.attr("align").trim().ifBlank { null }
+                ?: if (el.tagName().lowercase() == "center") "center" else null
+            return when (declared?.lowercase()) {
+                "center" -> ParagraphAlign.CENTER
+                "right", "end" -> ParagraphAlign.END
+                "left", "start", "justify" -> ParagraphAlign.START
+                else -> inherited
+            }
         }
 
         private fun isAttachment(href: String): Boolean {

@@ -2,6 +2,7 @@ package cn.jxnu.nvzhuanban.data.network.pages
 
 import cn.jxnu.nvzhuanban.data.model.ArticleBlock
 import cn.jxnu.nvzhuanban.data.model.InlineRun
+import cn.jxnu.nvzhuanban.data.model.ParagraphAlign
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -560,6 +561,79 @@ class ArticleDetailPageTest {
         assertEquals("」后的外链应存活: ${parsed.blocks}", listOf("详情"), links.map { it.text })
         val paragraphTexts = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>().map { flatten(it) }
         assertTrue("「】」本身应剥掉: $paragraphTexts", paragraphTexts.none { "】" in it })
+    }
+
+    /**
+     * 段落对齐还原：Word 粘贴正文常见的 `style="text-align:center"` 居中小标题、
+     * `align="right"` 右对齐落款（教务处 + 日期），无声明时保持 START。
+     */
+    @Test
+    fun `paragraph alignment parsed from style and legacy align attribute`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <p style="TEXT-ALIGN: center;">关于考试安排的补充说明</p>
+                  <p>正文普通段落</p>
+                  <p align="right">教务处</p>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val paragraphs = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>()
+        assertEquals(ParagraphAlign.CENTER, paragraphs.first { flatten(it) == "关于考试安排的补充说明" }.align)
+        assertEquals(ParagraphAlign.START, paragraphs.first { flatten(it) == "正文普通段落" }.align)
+        assertEquals(ParagraphAlign.END, paragraphs.first { flatten(it) == "教务处" }.align)
+    }
+
+    /** 对齐沿块级容器继承（Word 常写在外层包壳 div 上）；显式 left 是重置而非回退继承。 */
+    @Test
+    fun `alignment inherits through wrapper div and explicit left resets it`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <div style="text-align:center">
+                    <p>继承居中的段落</p>
+                    <p style="text-align:left">被显式重置回左对齐</p>
+                  </div>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val paragraphs = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>()
+        assertEquals(ParagraphAlign.CENTER, paragraphs.first { flatten(it) == "继承居中的段落" }.align)
+        assertEquals(ParagraphAlign.START, paragraphs.first { flatten(it) == "被显式重置回左对齐" }.align)
+    }
+
+    /** 老派 `<center>` 标签（早期 CMS 编辑器产物）也应还原为居中；justify 视作 START。 */
+    @Test
+    fun `center tag centers and justify maps to start`() {
+        val html = """
+            <html><body>
+              <div id="main-content" class="line padding-big-bottom">
+                <div class="text-large border-bottom padding text-center">测试通知</div>
+                <div class="line text-sub text-center">【时间：2026-07-13 10:00:00】</div>
+                <div id="main-content" class="line padding">
+                  <center>居中的附件标题</center>
+                  <p style="text-align:justify">两端对齐按普通段落处理</p>
+                </div>
+              </div>
+            </body></html>
+        """.trimIndent()
+
+        val parsed = ArticleDetailPage.parse(html, baseUri)
+        val paragraphs = parsed.blocks.filterIsInstance<ArticleBlock.Paragraph>()
+        assertEquals(ParagraphAlign.CENTER, paragraphs.first { flatten(it) == "居中的附件标题" }.align)
+        assertEquals(ParagraphAlign.START, paragraphs.first { flatten(it) == "两端对齐按普通段落处理" }.align)
     }
 
     private fun flatten(paragraph: ArticleBlock.Paragraph): String =

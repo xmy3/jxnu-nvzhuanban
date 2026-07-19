@@ -116,6 +116,16 @@
     <string name="announcement_login_required_title">登录后查看通知详情</string>
     <string name="announcement_login_required_desc">这条通知需要登录教务系统后才能查看完整内容</string>
     <string name="announcement_login_required_action">去登录</string>
+    <!-- 详情页阅读体验 -->
+    <string name="announcement_detail_empty">正文为空</string>
+    <string name="announcement_view_image">查看大图</string>
+    <string name="announcement_image_fallback_desc">通知配图</string>
+    <string name="announcement_font_size_action">调整字号</string>
+    <string name="announcement_font_size_title">正文字号</string>
+    <string name="announcement_font_size_small">小</string>
+    <string name="announcement_font_size_default">标准</string>
+    <string name="announcement_font_size_large">大</string>
+    <string name="announcement_font_size_xlarge">特大</string>
 
     <!-- 个人中心 -->
     <string name="profile_title">我的</string>

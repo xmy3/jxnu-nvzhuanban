@@ -43,6 +43,24 @@ enum class SchedulePalette(val storageValue: String) {
 }
 
 /**
+ * 通知详情正文的字号档位。[scale] 由详情页乘到 LocalDensity.fontScale 上（叠加在系统字体
+ * 缩放之上），整篇正文（标题 / 段落 / 表格 / 附件名）成比例缩放。
+ *
+ * 与 [ThemeMode] / [SchedulePalette] 同为外观偏好：登出**不**清（换账号不影响阅读习惯）。
+ */
+enum class ArticleFontSize(val storageValue: String, val scale: Float) {
+    SMALL("small", 0.85f),
+    DEFAULT("default", 1f),
+    LARGE("large", 1.15f),
+    XLARGE("xlarge", 1.3f);
+
+    companion object {
+        fun fromStorage(raw: String?): ArticleFontSize =
+            entries.firstOrNull { it.storageValue == raw } ?: DEFAULT
+    }
+}
+
+/**
  * 单例持久化主题选择。
  *
  * 用 SharedPreferences 而非 DataStore，理由与 [cn.jxnu.nvzhuanban.data.network.AuthStorage] 一致：
@@ -54,6 +72,7 @@ object ThemePrefs {
     private const val KEY_MODE = "mode"
     private const val KEY_DYNAMIC = "dynamic_color"
     private const val KEY_SCHEDULE_PALETTE = "schedule_palette"
+    private const val KEY_ARTICLE_FONT_SIZE = "article_font_size"
 
     private lateinit var sp: SharedPreferences
     private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
@@ -67,12 +86,17 @@ object ThemePrefs {
     private val _schedulePalette = MutableStateFlow(SchedulePalette.CLASSIC)
     val schedulePalette: StateFlow<SchedulePalette> = _schedulePalette.asStateFlow()
 
+    // 通知详情正文字号；外观偏好，登出不清
+    private val _articleFontSize = MutableStateFlow(ArticleFontSize.DEFAULT)
+    val articleFontSize: StateFlow<ArticleFontSize> = _articleFontSize.asStateFlow()
+
     fun init(context: Context) {
         if (::sp.isInitialized) return
         sp = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         _themeMode.value = ThemeMode.fromStorage(sp.getString(KEY_MODE, null))
         _dynamicColor.value = sp.getBoolean(KEY_DYNAMIC, true)
         _schedulePalette.value = SchedulePalette.fromStorage(sp.getString(KEY_SCHEDULE_PALETTE, null))
+        _articleFontSize.value = ArticleFontSize.fromStorage(sp.getString(KEY_ARTICLE_FONT_SIZE, null))
     }
 
     fun setMode(mode: ThemeMode) {
@@ -93,5 +117,11 @@ object ThemePrefs {
         if (!::sp.isInitialized) return
         sp.edit().putString(KEY_SCHEDULE_PALETTE, palette.storageValue).apply()
         _schedulePalette.value = palette
+    }
+
+    fun setArticleFontSize(size: ArticleFontSize) {
+        if (!::sp.isInitialized) return
+        sp.edit().putString(KEY_ARTICLE_FONT_SIZE, size.storageValue).apply()
+        _articleFontSize.value = size
     }
 }

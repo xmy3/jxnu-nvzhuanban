@@ -31,7 +31,11 @@ data class ArticleDetail(
  * 渲染顺序按解析时的文档流。
  */
 sealed interface ArticleBlock {
-    data class Paragraph(val runs: List<InlineRun>) : ArticleBlock
+    data class Paragraph(
+        val runs: List<InlineRun>,
+        /** 水平对齐：还原 Word 粘贴正文的居中小标题 / 右对齐落款；解析不出时为 START。 */
+        val align: ParagraphAlign = ParagraphAlign.START,
+    ) : ArticleBlock
 
     /**
      * [src] 在 Jsoup 解析阶段已被 baseUri 解析为绝对 URL，渲染走
@@ -66,6 +70,12 @@ sealed interface ArticleBlock {
     /** `<hr>`。 */
     data object Divider : ArticleBlock
 }
+
+/**
+ * 段落水平对齐。对应 HTML 的 `text-align` 样式 / 传统 `align` 属性 / `<center>` 标签，
+ * 只抽 jwc 通知实际用到的三种（justify 视作 START）。
+ */
+enum class ParagraphAlign { START, CENTER, END }
 
 sealed interface InlineRun {
     data class Text(val text: String, val style: InlineStyle = InlineStyle()) : InlineRun
