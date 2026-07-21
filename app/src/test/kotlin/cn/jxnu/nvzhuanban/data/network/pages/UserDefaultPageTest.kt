@@ -78,6 +78,29 @@ class UserDefaultPageTest {
     }
 
     @Test
+    fun `extractStudentId returns null on jwc error stubs`() {
+        // probeSession 的语义判活（2026-07 起）依赖本函数：jwc 对无效会话曾实测直出这两种
+        // 纯文本 stub，解出 null 才能把假 Valid 拦成 Invalid → 触发重登阶梯而非假登录进主界面。
+        assertNull(UserDefaultPage.extractStudentId("您提交的内容中含有非法字符,已经被拒绝4.Error参数错误"))
+        assertNull(UserDefaultPage.extractStudentId("【访问受限：请登录后访问！】【参数错误】"))
+    }
+
+    @Test
+    fun `extractStudentId tolerates non-Chinese names via degraded id-only match`() {
+        // 主 WELCOME 正则要求姓名段 2-10 个中文字符；留学生等非中文姓名账号会整体 miss——
+        // 判活（probeSession / SSO 续票复验）只需要学号，降级匹配必须把它救回来，
+        // 否则这批用户的有效会话被恒判 Invalid、每次冷启动白跑全量账密登录。
+        val html = """
+            <html><body>
+            <span id="lblUserInfor">   欢迎您，(2024050001,Student) Smith</span>
+            </body></html>
+        """.trimIndent()
+        assertEquals("2024050001", UserDefaultPage.extractStudentId(html))
+        // 主正则命中时降级路径不改变结果
+        assertEquals("20250101", UserDefaultPage.extractStudentId(FIXTURE_NORMAL))
+    }
+
+    @Test
     fun `generates a photo url that points at jwc PhotoShow endpoint`() {
         val profile = UserDefaultPage.parse("20250101", FIXTURE_NORMAL)
         assertTrue("应当生成头像 URL", !profile.avatarUrl.isNullOrBlank())

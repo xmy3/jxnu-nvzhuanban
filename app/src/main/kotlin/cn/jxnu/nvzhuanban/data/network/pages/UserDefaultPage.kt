@@ -75,10 +75,24 @@ object UserDefaultPage {
 
     /**
      * 只从 `/User/Default.aspx` 的 HTML 里抽学号，抽不到返回 null。
-     * 供 [cn.jxnu.nvzhuanban.data.network.CasLoginClient.tryRefreshViaSso] 判「是否真的已登录」用：
-     * 匿名 / 登录页里没有 lblUserInfor，解不出学号即视为续票失败。
+     * 供 [cn.jxnu.nvzhuanban.data.network.CasLoginClient.tryRefreshViaSso] 与
+     * `probeSession` 的语义判活用：匿名 / 登录页 / 报错 stub 里没有 lblUserInfor，
+     * 解不出学号即视为未登录。
      */
-    internal fun extractStudentId(html: String): String? = extractIdAndName(html).first
+    internal fun extractStudentId(html: String): String? {
+        extractIdAndName(html).first?.let { return it }
+        // 降级：主正则要求姓名段是 2-10 个中文字符，非中文姓名账号（留学生等）会整体 miss，
+        // 把有效会话误判成未登录 → 每次冷启动白跑全量账密登录。判活只需要学号——放宽到
+        // 「欢迎您，(学号,」前缀即可；匿名壳页 / 报错 stub 不含此结构，判活可靠性不受影响。
+        if (html.isBlank()) return null
+        val text = runCatching { Jsoup.parse(html).selectFirst("#lblUserInfor")?.text() }
+            .getOrNull()
+            ?: html
+        return ID_ONLY.find(text)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }
+    }
+
+    /** [extractStudentId] 的降级匹配：只要求「欢迎您，(学号,」结构，不看姓名。 */
+    private val ID_ONLY = Regex("""欢迎您[，,]\s*[（(]\s*([^,，)）\s]+)\s*[,，]""")
 
     /**
      * 从 `欢迎您，(学号,Student) 姓名` 中抓 (学号, 姓名)。任何一段抓不到返回 null。

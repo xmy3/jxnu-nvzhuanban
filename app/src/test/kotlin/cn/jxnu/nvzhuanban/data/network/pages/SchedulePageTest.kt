@@ -2,9 +2,12 @@ package cn.jxnu.nvzhuanban.data.network.pages
 
 import cn.jxnu.nvzhuanban.data.model.CourseType
 import cn.jxnu.nvzhuanban.data.model.SemesterPhase
+import cn.jxnu.nvzhuanban.data.network.JwcError
+import cn.jxnu.nvzhuanban.data.network.JwcException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -113,8 +116,28 @@ class SchedulePageTest {
         assertEquals("_ctl1", SchedulePage.parse(FIXTURE).controlPrefix)
         // 教师页（教务通过 All_Display.aspx 渲染 Xfz_Kcb.ascx 时）用 _ctl6
         assertEquals("_ctl6", SchedulePage.parse(TEACHER_PREFIX_FIXTURE).controlPrefix)
-        // 没有 ddlSterm 时退回到 _ctl1
-        assertEquals("_ctl1", SchedulePage.parse("<html></html>").controlPrefix)
+        // ddlSterm 有 id 无 name 属性时退回到 _ctl1（锚点仍在，只是 name 缺失）
+        assertEquals(
+            "_ctl1",
+            SchedulePage.parse("""<html><select id="_ctl1_ddlSterm"><option value="2026/3/1 0:00:00">x</option></select></html>""").controlPrefix,
+        )
+    }
+
+    @Test
+    fun `parse fails fast on page without ddlSterm anchor`() {
+        // 锚点 fail-fast（2026-07 实测教训）：jwc 对无效会话曾以 200 纯文本穿透 Guard，
+        // 无锚点时 parse 把垃圾输入静默解析成「合法空课表」写进缓存——UI 呈现 Success 空网格、
+        // 无错误无重试无重登入口。ddlSterm 学期下拉是课表页固定控件（真实空课表也有），
+        // 缺它必须抛 Decode 走错误态。
+        val junkInputs = listOf(
+            "您提交的内容中含有非法字符,已经被拒绝4.Error参数错误",
+            "【访问受限：请登录后访问！】【参数错误】",
+            "<html></html>",
+        )
+        junkInputs.forEach { junk ->
+            val thrown = assertThrows(JwcException::class.java) { SchedulePage.parse(junk) }
+            assertTrue("应是 Decode 错误: ${thrown.error}", thrown.error is JwcError.Decode)
+        }
     }
 
     @Test

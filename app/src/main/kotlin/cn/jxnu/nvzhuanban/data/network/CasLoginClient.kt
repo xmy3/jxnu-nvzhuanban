@@ -185,9 +185,19 @@ class CasLoginClient(
         try {
             val req = Request.Builder().url(JxnuUrls.USER_DEFAULT).get().build()
             httpClient.client.newCall(req).execute().use { resp ->
-                // readJwcHtml 会把「200 实为登录页 / 跳 CAS / 跳 SSO 重登页 / jwc 5xx」全部抛成 JwcException。
+                // readJwcHtml 会把「200 实为登录页 / 跳 CAS / 跳 SSO 重登页 / preurl 未登录跳转 /
+                // 访问受限 stub / jwc 5xx」全部抛成 JwcException。
                 val html = JwcResponseGuard.readJwcHtml(resp, "用户首页返回空响应")
-                SessionProbe.Valid(html)
+                // 语义判活：拿回的必须是真·已登录首页（lblUserInfor 里解得出学号）。jwc 对无效
+                // 会话的报错形态一变再变（2026-07 起是 default.aspx?preurl= 跳转 / 「访问受限」
+                // 短文本），Guard 的形态清单永远可能落后一步；这里按「首页语义」兜底，解不出
+                // 学号一律按失效处理——决不把垃圾页放行成 Valid（那会让冷启动带着占位 profile
+                // 假登录进主界面、课表/个人信息全空且永不自愈）。与 [tryRefreshViaSso] 的复验同款。
+                if (UserDefaultPage.extractStudentId(html).isNullOrBlank()) {
+                    SessionProbe.Invalid
+                } else {
+                    SessionProbe.Valid(html)
+                }
             }
         } catch (e: JwcException) {
             // 业务语义的失效（含 SessionExpired / EmptyResponse / Server 5xx / 异常重定向）→ 确证失效。

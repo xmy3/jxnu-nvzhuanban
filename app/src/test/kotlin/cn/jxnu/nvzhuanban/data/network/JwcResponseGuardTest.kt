@@ -94,6 +94,78 @@ class JwcResponseGuardTest {
     }
 
     @Test
+    fun `throws session expired when redirected to jwc default aspx with preurl`() {
+        // 2026-07 实测：jwc 对无效会话不再跳 CAS/LoginAccount，而是 302 两跳落在自家
+        // default.aspx?preurl=<原路径>，200 + 74 字节纯文本报错。落点在 jwc 域、200、无登录页
+        // 特征，旧守卫全放行 → SessionExpired 永远不触发 → 自动重登体系整体失效（v1.11.0 线上症状：
+        // 长时间闲置后「课表不加载、个人信息丢失」且永不自愈）。preurl 是 jwc「登录后回跳」跳转的
+        // 专用参数，已登录流量不会带它落到 default.aspx。
+        val response = response(
+            "https://jwc.jxnu.edu.cn/default.aspx?preurl=user/default.aspx",
+            200,
+            "您提交的内容中含有非法字符,已经被拒绝4.Error参数错误",
+        )
+
+        val thrown = assertThrows(JwcException::class.java) {
+            JwcResponseGuard.readJwcHtml(response, "empty")
+        }
+        assertEquals(JwcError.SessionExpired, thrown.error)
+    }
+
+    @Test
+    fun `validateJwcResponse also rejects preurl redirect for byte endpoints`() {
+        // getBytes（图片）只走 validateJwcResponse，不读 body——preurl 落点判定必须在 URL 层完成。
+        val response = response(
+            "https://jwc.jxnu.edu.cn/Default.aspx?PreUrl=MyControl/All_PhotoShow.aspx",
+            200,
+            "junk",
+        )
+
+        val thrown = assertThrows(JwcException::class.java) {
+            JwcResponseGuard.validateJwcResponse(response)
+        }
+        assertEquals(JwcError.SessionExpired, thrown.error)
+    }
+
+    @Test
+    fun `throws session expired on short access-denied stub body`() {
+        // 2026-07 实测：MyControl/All_Display.aspx 系（成绩/培养方案/补缓考/出分）对无效会话
+        // 零跳 200 直出 60 字节纯文本。落点 URL 不变，只能靠 body 嗅探。
+        val response = response(
+            "https://jwc.jxnu.edu.cn/MyControl/All_Display.aspx?UserControl=xfz_cj3.ascx&Action=Personal",
+            200,
+            "【访问受限：请登录后访问！】【参数错误】",
+        )
+
+        val thrown = assertThrows(JwcException::class.java) {
+            JwcResponseGuard.readJwcHtml(response, "empty")
+        }
+        assertEquals(JwcError.SessionExpired, thrown.error)
+    }
+
+    @Test
+    fun `does not flag large business page that mentions access-denied words`() {
+        // 通知正文完全可能出现「访问受限」「请登录」字样；嗅探仅对短小无结构的 stub 生效，
+        // 正常业务页（ASP.NET 页面光 VIEWSTATE 就远超阈值）不受影响。
+        val filler = "<p>教务处关于系统维护的说明。</p>".repeat(60)
+        val body = "<html><body><article>" +
+            "<p>维护期间部分页面访问受限：请登录后访问！由此带来的不便敬请谅解。</p>" +
+            filler + "</article></body></html>"
+        val response = response("https://jwc.jxnu.edu.cn/Portal/ArticlesView.aspx?id=1", 200, body)
+
+        assertEquals(body, JwcResponseGuard.readJwcHtml(response, "empty"))
+    }
+
+    @Test
+    fun `assertNotLoginPage throws on access-denied stub bytes`() {
+        // 半死会话下图片端点若回同款「访问受限」短文本，也要转成 SessionExpired 让 getBytesAuth 重登。
+        val thrown = assertThrows(JwcException::class.java) {
+            JwcResponseGuard.assertNotLoginPage("【访问受限：请登录后访问！】【参数错误】".toByteArray())
+        }
+        assertEquals(JwcError.SessionExpired, thrown.error)
+    }
+
+    @Test
     fun `rejects unexpected final host`() {
         val response = response("https://example.com/phishing", 200, "<html></html>")
 

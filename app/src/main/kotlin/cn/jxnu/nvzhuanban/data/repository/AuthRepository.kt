@@ -132,15 +132,19 @@ class AuthRepository private constructor(
                 val saved = creds.save(username, password)
                 if (saved) {
                     storage.lastUsername = username
-                } else {
-                    // EncryptedSharedPreferences 写失败（厂商魔改 ROM / keystore 损坏 / 设备空间满）
-                    // 之前的策略是静默关 rememberMe，用户视角"登录成功"但下次启动还得重新输——
-                    // 体验非常古怪。这里把一次性警告塞到 lastLoginWarning，由登录页 ViewModel
-                    // 在 submit 成功后取走显示。
+                } else if (creds.isPermanentlyBroken()) {
+                    // EncryptedSharedPreferences 确定性损坏且修复阶梯也救不回（厂商魔改 ROM /
+                    // keystore 彻底坏 / 设备空间满）：诚实关掉自动登录——承诺"记住"却永远记不住
+                    // 更糟。一次性警告塞到 lastLoginWarning，由登录页 ViewModel 取走显示。
                     storage.rememberMe = false
                     storage.lastUsername = null
                     creds.clear()
                     lastLoginWarning = "本机无法安全保存密码，已关闭自动登录"
+                } else {
+                    // 瞬时 Keystore 故障（开机早期未就绪 / 系统繁忙）：密码这次没存上，但**不**关
+                    // rememberMe——一次抖动就把开关永久关掉，正是「瞬时当永久」要消灭的形态。
+                    // 下次登录（或本次会话内的再次保存）自然重试。
+                    lastLoginWarning = "本机安全存储暂时不可用，本次密码未能保存"
                 }
             } else {
                 creds.clear()
@@ -208,7 +212,9 @@ class AuthRepository private constructor(
             is CasLoginClient.Result.Transient -> {
                 // 瞬时失败（网络/环境）：保留凭证。有凭证 → 同样乐观放行（离线兜底），别把只是没网的用户
                 // 挡在登录页手输密码。降级 profile 不写 lastLoggedUser。
-                autoLoginThrottle.recordFailure()
+                // 刻意**不** recordFailure：冷启动首败多为网络慢热，此刻预支 30s 冷却会把进主界面后
+                // 网络恢复的第一波业务 reauth 全部拦成「网络错误」（用户视角：明明有网却报无网）。
+                // 风暴防护不受影响——高频重试真正来自业务请求触发的 tryReauthSilently，那条路自己计数。
                 _state.value = AuthState.LoggedIn(degradedProfile(saved.username))
                 true
             }

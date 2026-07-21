@@ -31,10 +31,11 @@ object JwcClient {
             JwcResponseGuard.validateJwcResponse(resp)
             val bytes = resp.body.bytes().takeIf { it.isNotEmpty() }
                 ?: throw JwcException(JwcError.EmptyResponse, emptyMessage)
-            // 半死会话对图片端点也可能回 200 + 登录/占位 HTML（不重定向），validateJwcResponse
-            // 放行后 BitmapFactory 解不出图 → 静默破图、永不自愈。这里对「看起来是 HTML 的字节」
-            // 补一次登录页嗅探，把它转成 SessionExpired 让 getBytesAuth 能触发重登重放。
-            if (bytes.looksLikeHtml()) {
+            // 半死会话对图片端点也可能回 200 + 登录/占位 HTML（不重定向），或「访问受限」纯文本
+            // 短 stub（不像 HTML，2026-07 实测形态），validateJwcResponse 放行后 BitmapFactory
+            // 解不出图 → 静默破图、永不自愈。这里对「看起来是 HTML 或极短」的字节补一次嗅探，
+            // 把它转成 SessionExpired 让 getBytesAuth 能触发重登重放。
+            if (bytes.looksLikeHtml() || bytes.size <= JwcResponseGuard.MAX_STUB_BYTES) {
                 JwcResponseGuard.assertNotLoginPage(bytes)
             }
             bytes

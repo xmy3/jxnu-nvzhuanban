@@ -3,6 +3,8 @@ package cn.jxnu.nvzhuanban.data.network.pages
 import cn.jxnu.nvzhuanban.data.model.Course
 import cn.jxnu.nvzhuanban.data.model.CourseType
 import cn.jxnu.nvzhuanban.data.model.SemesterPhase
+import cn.jxnu.nvzhuanban.data.network.JwcError
+import cn.jxnu.nvzhuanban.data.network.JwcException
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -101,6 +103,16 @@ object SchedulePage {
      */
     fun parse(html: String, today: LocalDate = LocalDate.now()): Parsed {
         val doc = Jsoup.parse(html)
+        // 锚点 fail-fast：ddlSterm 学期下拉是课表页固定控件，真实空课表（学生本学期没课）也有它。
+        // 解析不到 = 这根本不是课表页。jwc 对无效会话的报错形态一变再变（2026-07 曾以 200 纯文本
+        // 穿透 Guard），没有锚点时本函数会把垃圾输入静默解析成「合法空课表」写进缓存——UI 呈现
+        // Success 空网格、无错误无重试无重登入口。宁可抛 Decode 走错误态，也不产出以假乱真的空模型。
+        if (doc.selectFirst("select[id$=_ddlSterm]") == null) {
+            throw JwcException(
+                JwcError.Decode("课表页缺少学期下拉锚点，可能是会话半失效返回的壳页面"),
+                "课表加载异常，请下拉刷新重试；若持续出现请重新登录",
+            )
+        }
         val semesters = parseSemesterOptions(doc, today)
         val serverSelectedValue = doc.selectFirst("select[id$=_ddlSterm] > option[selected]")
             ?.attr("value")
